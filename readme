@@ -1,0 +1,1831 @@
+# POP Audit Platform — Complete Technical Handover, Current State, Requirements, and Implementation Roadmap
+
+## 1. Role and Mission
+
+Act as a senior DevOps engineer, network automation engineer, Python backend developer, Docker specialist, and ISP/NOC systems architect.
+
+I am developing an application called **POP Audit**, a Site Health Check Platform for an Internet Service Provider.
+
+The goal is to provide a professional NOC web application in which an operator enters only a Site Code, and the platform automatically discovers the devices belonging to that POP, checks their health, analyzes radio links, displays the results, and generates downloadable reports.
+
+This is an existing project. Continue from its current implementation rather than rebuilding it from scratch.
+
+Your priorities are:
+
+1. Preserve all currently working functionality.
+2. Fix the remaining discovery and monitoring issues.
+3. Complete the unified radio table, twelve-hour historical analysis, NCS discovery, and switch log display.
+4. Complete Docker Compose containerization.
+5. Verify the complete system using real monitoring data.
+6. Improve reliability and security without disrupting the existing host.
+
+**Do not claim anything is complete until it has been verified against the actual code, running service, and real API responses.**
+
+---
+
+# 2. Main Project Information
+
+Project name:
+
+```text
+POP Audit
+```
+
+Primary server directory:
+
+```text
+/opt/pop-audit/
+```
+
+Main configuration file:
+
+```text
+/opt/pop-audit/config/.env
+```
+
+Python virtual environments:
+
+```text
+/opt/pop-audit/venvs/
+```
+
+Current project directories:
+
+```text
+/opt/pop-audit/
+├── config/
+├── gateway/
+├── orchestrator/
+├── zabbix-service/
+├── cisco-service/
+├── ericsson-service/
+├── radio-service/
+├── report-service/
+├── reports/
+├── logs/
+├── shared/
+├── sql/
+└── venvs/
+```
+
+The established microservice architecture uses seven services.
+
+| Service | Source directory | Native port | Responsibility |
+|---|---|---:|---|
+| Gateway | `/opt/pop-audit/gateway/` | 8000 | Web UI and public-facing API |
+| Orchestrator | `/opt/pop-audit/orchestrator/` | 8001 | Async jobs and service coordination |
+| Zabbix Service | `/opt/pop-audit/zabbix-service/` | 8002 | Site/device discovery and monitoring data |
+| Cisco Service | `/opt/pop-audit/cisco-service/` | 8003 | Cisco switch SSH checks |
+| Ericsson Service | `/opt/pop-audit/ericsson-service/` | 8004 | Ericsson checks using Moshell |
+| Radio Service | `/opt/pop-audit/radio-service/` | 8005 | RTN/EBand and other radio link analysis |
+| Report Service | `/opt/pop-audit/report-service/` | 8006 | Excel report generation and download |
+
+The native systemd services are:
+
+```text
+pop-audit-gateway.service
+pop-audit-orchestrator.service
+pop-audit-zabbix.service
+pop-audit-cisco.service
+pop-audit-ericsson.service
+pop-audit-radio.service
+pop-audit-report.service
+```
+
+Native Python environments use Python 3.12.
+
+The current application is written primarily in Python using FastAPI, with HTTP communication between the microservices.
+
+The frontend uses HTML, CSS, and vanilla JavaScript.
+
+---
+
+# 3. Overall Business Workflow
+
+The final workflow should be:
+
+```text
+NOC Engineer
+     |
+     | Enter Site Code
+     v
+Gateway
+     |
+     v
+Orchestrator creates asynchronous job
+     |
+     v
+Zabbix Discovery
+     |
+     +-----------------------+
+     |                       |
+     v                       v
+Discover basebands      Discover Cisco devices
+     |
+     v
+Discover outgoing radio links
+     |
+     +-----------------------+
+     |           |           |
+     v           v           v
+   Cisco      Ericsson     Radio
+   checks     Moshell      analysis
+     |           |           |
+     +-----------+-----------+
+                 |
+                 v
+        Collect real results
+                 |
+                 v
+       Aggregate health status
+                 |
+                 v
+       Audit reaches COMPLETED
+                 |
+                 v
+      Generate Excel automatically
+                 |
+                 v
+       Gateway returns audit data
+                 |
+                 v
+       Web dashboard displays results
+                 |
+                 v
+       User downloads Excel report
+```
+
+The operator must enter only the Site Code.
+
+Never require the operator to manually enter device IP addresses.
+
+Zabbix API is the source of truth for site discovery and monitoring data. Do not use Zabbix database cloning or HTML scraping.
+
+---
+
+# 4. Existing Environment and Credentials
+
+Relevant environment variable names include:
+
+```text
+APP_ENV
+ZABBIX_URL
+ZABBIX_USER
+ZABBIX_PASSWORD
+
+ZABBIX_GROUP_ENODEB
+ZABBIX_GROUP_SWITCH
+ZABBIX_GROUP_RADIO
+
+ZABBIX_SERVICE_URL
+CISCO_SERVICE_URL
+ERICSSON_SERVICE_URL
+RADIO_SERVICE_URL
+REPORT_SERVICE_URL
+ORCHESTRATOR_URL
+GATEWAY_URL
+
+SSH_USERNAME
+SSH_PASSWORD
+SSH_CONNECT_TIMEOUT
+SSH_COMMAND_TIMEOUT
+
+MOSHELL_HOST
+MOSHELL_USER
+MOSHELL_PASSWORD
+
+DIFFERENCE_THRESHOLD
+MODULATION_EXPECTED
+RADIO_ANALYSIS_HOURS
+RADIO_HISTORY_DAYS
+
+MAX_CONCURRENT_BASEBANDS
+MAX_CONCURRENT_DEVICES
+MAX_CONCURRENT_RADIO_LINKS
+
+DATABASE_HOST
+DATABASE_PORT
+DATABASE_NAME
+DATABASE_USER
+DATABASE_PASSWORD
+```
+
+The exact expected variables and their use must be checked in the source code.
+
+The configuration file is:
+
+```text
+/opt/pop-audit/config/.env
+```
+
+Never display the full contents of this file.
+
+Never print passwords, tokens, or other sensitive values into the conversation or logs.
+
+Some native application files load the environment file explicitly:
+
+```python
+load_dotenv("/opt/pop-audit/config/.env")
+```
+
+Other files read environment variables directly.
+
+This behavior must be considered during containerization.
+
+The Docker environment must supply the correct variables to the correct services without putting credentials inside image layers.
+
+Do not modify or repurpose the existing PostgreSQL installation without examining its current usage first.
+
+---
+
+# 5. Existing Site 2488 Discovery Baseline
+
+Site `2488` was successfully discovered and audited during earlier testing.
+
+## 5.1 Baseband
+
+Known baseband:
+
+```text
+Hostname:
+Bijan-2488-eNodeB
+
+IP:
+172.27.193.42
+
+Zabbix Host ID:
+11141
+
+Group:
+LTE-Backhaul-eNodeB
+
+Template:
+9cells-eNODB
+```
+
+The current implementation has a known discovery issue: it fails to discover the second baseband in some POPs.
+
+This must be investigated and corrected.
+
+Do not assume that a POP contains exactly one baseband.
+
+## 5.2 Primary Cisco switch
+
+Known device:
+
+```text
+Hostname:
+TH-BH-SW-2488-Bijan
+
+IP:
+172.27.193.33
+
+Zabbix Host ID:
+11844
+
+Group:
+LTE-Backhaul-Switch
+
+Template:
+FDI Cisco SW
+```
+
+## 5.3 Radio links
+
+One RTN host:
+
+```text
+Host ID:
+69640
+
+Hostname:
+Bijan-2488-To-BolvarShahrzad-Zomorod-MahabGhods-ShamsTabrizi-HoseiniehErshad-BorjMina-Ghoba-980A-Huawei
+
+Source Site:
+2488
+
+Destination Site:
+980
+```
+
+EBand hosts:
+
+```text
+Host ID: 11420
+Bijan-2488-To-Kurosh-EBand
+```
+
+```text
+Host ID: 11421
+Bijan-2488-to-Zafar-EBand
+```
+
+Only outgoing links associated with the requested Site Code should be included.
+
+These examples are verified discovery data, not hardcoded production mappings.
+
+---
+
+# 6. Zabbix Service
+
+Location:
+
+```text
+/opt/pop-audit/zabbix-service/
+```
+
+Main files:
+
+```text
+/opt/pop-audit/zabbix-service/app/main.py
+/opt/pop-audit/zabbix-service/app/client.py
+/opt/pop-audit/zabbix-service/app/discovery.py
+/opt/pop-audit/zabbix-service/app/metric_models.py
+/opt/pop-audit/zabbix-service/app/models.py
+/opt/pop-audit/zabbix-service/app/radio_metrics.py
+```
+
+Port:
+
+```text
+8002
+```
+
+The service exposes discovery functionality through its API. The main discovery endpoint used by the Orchestrator is:
+
+```text
+POST /discover
+```
+
+The service is responsible for discovering:
+
+- Basebands/eNodeBs.
+- Cisco switches.
+- NCS Cisco devices where applicable.
+- Outgoing RTN links.
+- EBand links.
+- Other supported radio link types.
+
+The service also retrieves monitoring metrics, history, and trigger information used by the radio analysis.
+
+A previous bug was fixed: retrieving triggers for a host must authenticate the Zabbix API client first.
+
+The correct sequence includes:
+
+```python
+client.login()
+```
+
+before calling the trigger retrieval method.
+
+Do not regress this behavior.
+
+## Discovery requirements
+
+The current discovery logic needs to be reviewed carefully.
+
+Inspect:
+
+```text
+/opt/pop-audit/zabbix-service/app/discovery.py
+```
+
+Determine why the second baseband is missing.
+
+Check whether:
+
+- The initial host search finds all applicable hosts.
+- Group filters remove valid hosts.
+- Site Code matching is too restrictive.
+- Hostname parsing assumes only one baseband.
+- A result is being overwritten instead of appended.
+- The Orchestrator drops additional discovered records.
+- The frontend or report exporter assumes a single device.
+
+Fix the root cause. Do not create a special case that works only for one Site Code.
+
+---
+
+# 7. Cisco Service
+
+Location:
+
+```text
+/opt/pop-audit/cisco-service/app/main.py
+```
+
+Port:
+
+```text
+8003
+```
+
+The Cisco service uses SSH with Netmiko/Paramiko.
+
+The following commands have been used by the established implementation:
+
+```text
+show version
+show inventory
+show interfaces status
+show interfaces description
+show interfaces
+show logging
+show environment
+show env temperature status
+show environment status
+show environment summary
+```
+
+Existing checks include:
+
+- Device identity/version.
+- Inventory.
+- Interface status and descriptions.
+- Interface operational/admin state.
+- CRC errors.
+- Input errors.
+- Output errors and drops.
+- Logging.
+- Environment checks.
+
+Established behavior includes:
+
+```text
+CONNECTED / UP       → PASS
+disabled             → PASS
+err-disabled         → PASS
+suspended            → PASS
+inactive             → PASS
+NOTCONNECT / DOWN    → WARNING
+CRC > 0              → WARNING
+errors > 0           → WARNING
+```
+
+Generic speed-mismatch rules were deliberately avoided because some switches legitimately operate at different negotiated speeds.
+
+Do not add a new speed rule without a verified operational requirement.
+
+## Verified Site 2488 Cisco result
+
+```text
+STATUS      PASS
+INTERFACES  PASS
+LOGGING     PASS
+ENV         PASS
+```
+
+## New requirement: NCS switch discovery
+
+Some POPs have two associated Cisco switches.
+
+The normal switch includes the Site Code in the hostname.
+
+Example:
+
+```text
+TH-BH-SW-2225-SaadatAbad
+```
+
+The second switch is an NCS device.
+
+Example:
+
+```text
+TH-BH-RTR-NCS-SaadatAbad-Agg
+```
+
+The NCS hostname does not necessarily include the Site Code.
+
+Known NCS patterns:
+
+```text
+TH-BH-NCS
+```
+
+```text
+TH-BH-RTR-NCS
+```
+
+The application must discover the primary switch using the Site Code, then find and associate the applicable NCS switch using shared location information and other available metadata.
+
+The association algorithm must not use a fixed mapping for Site `2225` alone.
+
+It must support other POPs.
+
+Use Zabbix host information and verified hostname patterns to match the NCS candidate to the appropriate POP. If a location match is ambiguous, do not silently associate a potentially wrong switch.
+
+The full workflow must pass both switches into the Cisco check service, and both devices must appear in the web results and Excel report.
+
+## New requirement: last ten switch logs
+
+At the bottom of the web page, display the latest ten log entries from:
+
+1. The normal Cisco switch.
+2. The associated NCS switch, when present.
+
+Use the existing SSH command execution mechanism and actual switch output.
+
+Verify how `show logging` output is ordered and parsed.
+
+Do not show ten arbitrary lines if they are not the latest events.
+
+If fewer than ten events exist, show the events available.
+
+If the device has no NCS counterpart, display an appropriate unavailable/not-applicable state without failing the whole audit.
+
+If log retrieval fails, report the failure rather than inventing logs.
+
+---
+
+# 8. Ericsson Service
+
+Location:
+
+```text
+/opt/pop-audit/ericsson-service/app/main.py
+```
+
+Port:
+
+```text
+8004
+```
+
+The Ericsson service executes Moshell checks through SSH to the configured Moshell host.
+
+The Moshell host is:
+
+```text
+172.20.10.28
+```
+
+The remote hostname was verified as:
+
+```text
+ran-moshell-01
+```
+
+The Moshell binary on that remote host is:
+
+```text
+/home/a.torkashvand/Moshell25F/moshell
+```
+
+The working session method is important.
+
+Do not use:
+
+```text
+moshell -e -f
+```
+
+because it bypassed the working rc/user-variable configuration.
+
+The successful session method is equivalent to:
+
+```text
+moshell 172.27.193.42
+```
+
+Use a single interactive Paramiko shell session.
+
+The tested command sequence was:
+
+```text
+Start Moshell session
+Wait
+
+lt all
+Wait
+
+st cel
+Wait
+
+alt
+Wait
+
+get . clock
+Wait
+
+q
+```
+
+The production implementation already includes parsers and a real Moshell execution path.
+
+Existing checks include:
+
+- Managed element connectivity.
+- Cell status.
+- Alarm collection and severity mapping.
+- Clock status.
+
+## Verified Site 2488 Ericsson result
+
+Nine cells were found.
+
+All nine cells were:
+
+```text
+UNLOCKED
+ENABLED
+```
+
+Clock result:
+
+```text
+radioClockState 6
+RNT_TIME_LOCKED
+```
+
+Clock status is PASS.
+
+Actual alarms included:
+
+```text
+C License Key File Fault
+w License Usage Exceeds Capacity
+m External Link Failure
+```
+
+The parser uses case-sensitive alarm mapping:
+
+```python
+if severity == "C":
+    CRITICAL
+elif severity == "M":
+    MAJOR
+elif severity == "m":
+    MINOR
+elif severity == "w":
+    WARNING
+else:
+    UNKNOWN
+```
+
+The baseline result was:
+
+```text
+STATUS : CRITICAL
+ALARMS : CRITICAL
+TOTAL  : 3
+CRIT   : 1
+MAJOR  : 0
+```
+
+Do not alter the working Moshell approach unnecessarily.
+
+---
+
+# 9. Radio Service
+
+Location:
+
+```text
+/opt/pop-audit/radio-service/
+```
+
+Main files:
+
+```text
+/opt/pop-audit/radio-service/app/main.py
+/opt/pop-audit/radio-service/app/eband.py
+/opt/pop-audit/radio-service/app/rtn.py
+/opt/pop-audit/radio-service/app/radio_rules.py
+```
+
+Port:
+
+```text
+8005
+```
+
+The main analysis endpoint is:
+
+```text
+POST /analyze
+```
+
+The service handles outgoing radio links discovered from Zabbix.
+
+Supported link types must include:
+
+- RTN
+- EBand
+- NRay
+- Intracom
+
+## Existing verified EBand rules
+
+Difference:
+
+```text
+< 7 dB → OK
+>= 7 dB → Not OK
+```
+
+The user has described the threshold as difference below seven being acceptable and a problem at seven or above. Verify the actual existing rule implementation and apply the same defined threshold consistently.
+
+RX power:
+
+```text
+RX < -45 dBm        → CRITICAL
+-45 <= RX < -37     → WARNING
+RX >= -37           → PASS
+```
+
+Capacity threshold in the current logic is approximately:
+
+```text
+2.2 Gbps
+```
+
+However, the user has now explicitly requested **removal of Capacity Health** from the result presentation and report.
+
+Remove the Capacity Health feature from the relevant health calculation and UI/report fields if it is dedicated to this feature. Do not delete an unrelated capacity metric if another required function still uses it.
+
+Modulation expectations must remain based on the existing verified radio rules. A known 5G RX modulation expectation is 256 in the current EBand implementation.
+
+Do not invent additional TX modulation, SNIR, BBER, BBE, ESR, ES, or other thresholds without validating the actual data and configured rules.
+
+Verified Site 2488 EBand results:
+
+```text
+Kurosh EBand → PASS
+Zafar EBand  → PASS
+```
+
+## Existing RTN rules
+
+The verified modulation rule is:
+
+```text
+modulation >= 13 → PASS
+modulation < 13  → WARNING
+```
+
+Difference:
+
+```text
+difference < 7  → acceptable
+difference >= 7 → problem
+```
+
+Existing traffic threshold values are around:
+
+```text
+350 Mbps / 410 Mbps
+```
+
+Existing packet-loss trigger levels include:
+
+```text
+5%
+20%
+80%
+```
+
+The exact interpretation of each rule must be validated against the actual code before modification.
+
+RTN may contain several individual links/legs.
+
+Do not replace the existing radio-analysis algorithms simply to make the frontend table easier to implement.
+
+## Verified Site 2488 radio result
+
+```text
+Overall Radio Status: WARNING
+
+RTN: WARNING
+EBand Kurosh: PASS
+EBand Zafar: PASS
+```
+
+The actual EBand links have previously returned real values for RX/TX, calloff, difference, modulation, capacity, and interface checks.
+
+---
+
+# 10. New Radio UI and Data Requirements
+
+These are explicit new requirements and have not yet been verified as implemented.
+
+## 10.1 Remove Capacity Health
+
+Capacity Health is not wanted.
+
+Remove it from the web UI and Excel.
+
+Inspect the backend for a dedicated Capacity Health status calculation and remove it if no other required check depends on it.
+
+Preserve unrelated checks.
+
+## 10.2 One unified Links table
+
+The user does not want separate presentation sections for each link type.
+
+All supported link types must appear in a unified table:
+
+```text
+RTN
+EBand
+NRay
+Intracom
+```
+
+Use the title:
+
+```text
+Links
+```
+
+Apply the title consistently to the web dashboard and Excel report.
+
+Do not discard link-type metadata from the underlying records. The user is requesting one combined presentation, not removal of the individual type identities.
+
+## 10.3 Numeric values instead of status words
+
+The requested primary radio table is:
+
+| Radio Host | RX/TX Difference | Modulation |
+|---|---:|---:|
+| Real radio hostname | Real numeric difference | Real numeric modulation |
+
+The numeric cells must display the actual measured values.
+
+For example, a value such as `3.2` must be displayed as `3.2`, even if the associated status is Not OK because of an independently verified condition.
+
+Do not substitute a health word for the measured value.
+
+Do not fabricate numbers when data is missing.
+
+Keep numeric measurements separate from the status evaluation.
+
+The user has explicitly asked for these three columns as the primary display:
+
+```text
+Radio Host
+RX/TX Difference
+Modulation
+```
+
+Any extra columns should be considered only if they are genuinely necessary for the user’s requirements.
+
+## 10.4 Light or milky background
+
+The existing frontend uses a dark-blue theme.
+
+The user wants a light, milky/cream background for the radio table and its numeric cells instead of dark blue.
+
+Change the relevant CSS without unnecessarily redesigning unrelated areas.
+
+Use appropriate contrast and readable text.
+
+## 10.5 Status colors
+
+Required color semantics:
+
+```text
+OK        → GREEN
+NOT OK    → RED
+UNKNOWN   → GRAY
+```
+
+Numeric values must remain visible.
+
+Unknown must not be treated as zero.
+
+Missing, stale, or unavailable data must not falsely appear healthy.
+
+## 10.6 Twelve-hour historical persistence
+
+The user explicitly requires checking the last twelve hours to determine whether the same problem has persisted.
+
+The system must distinguish:
+
+1. A current healthy condition.
+2. A current problem that appears newly.
+3. A problem that demonstrably persists over the relevant twelve-hour period.
+4. An unknown condition caused by missing/inadequate data.
+
+The exact wording/status to use for persistent problems should be practical for a NOC operator, and the UI should make clear that the problem has been present for a while.
+
+Use real Zabbix history and trigger/event data.
+
+Do not infer continuous persistence from a single recent failing sample.
+
+Do not infer recovery or health from missing data.
+
+A trigger that occurred once in the last twelve hours does not automatically prove it remained active for twelve hours.
+
+Check timestamps and recovery events where available.
+
+If the historical evidence is insufficient, show the appropriate Unknown/insufficient-history indication.
+
+The current project includes an existing six-hour radio analysis configuration and a seven-day history configuration. The new user requirement explicitly specifies twelve-hour persistence and must not be silently reduced to the six-hour window.
+
+Preserve all existing valid link-specific logic while implementing this feature.
+
+---
+
+# 11. Orchestrator
+
+Files:
+
+```text
+/opt/pop-audit/orchestrator/app/main.py
+/opt/pop-audit/orchestrator/app/runner.py
+/opt/pop-audit/orchestrator/app/models.py
+```
+
+Port:
+
+```text
+8001
+```
+
+The Orchestrator has implemented asynchronous audit jobs.
+
+The lifecycle includes:
+
+```text
+QUEUED
+DISCOVERY
+RUNNING
+COMPLETED
+FAILED
+```
+
+The main endpoint is:
+
+```text
+POST /audit
+```
+
+It returns a job identifier and starts an asynchronous audit.
+
+Job retrieval:
+
+```text
+GET /audit/{job_id}
+```
+
+The Orchestrator calls the appropriate microservices to perform the actual checks.
+
+It aggregates results into an overall audit status.
+
+Status priority:
+
+```text
+CRITICAL
+WARNING
+UNKNOWN
+NOT_AVAILABLE
+PASS
+```
+
+The status extraction logic considers a wrapper result and the health status inside its `data` object.
+
+## Important limitation
+
+The current implementation stores jobs in an in-memory dictionary:
+
+```python
+self.jobs = {}
+```
+
+This means that a restart of the Orchestrator process can lose active and completed job records.
+
+Persistent job storage is a production-hardening requirement.
+
+Inspect the existing database environment variables and `/opt/pop-audit/sql/` before designing persistence.
+
+There are existing PostgreSQL configuration values, but do not assume the application already has a working job-history schema.
+
+Do not change or destroy existing database objects.
+
+Design any new persistence work so that it does not interfere with unrelated PostgreSQL workloads.
+
+## Report integration
+
+The Orchestrator was modified so that after a successful audit reaches `COMPLETED`, it automatically calls the Report Service.
+
+The intended behavior is:
+
+```text
+Audit completed
+      ↓
+Generate Excel
+      ↓
+Store report metadata in job
+```
+
+Report-generation failure is designed to be nonfatal to the completed audit.
+
+Verify the current source before assuming this behavior still works.
+
+---
+
+# 12. Report Service
+
+Location:
+
+```text
+/opt/pop-audit/report-service/app/main.py
+```
+
+Port:
+
+```text
+8006
+```
+
+Python environment:
+
+```text
+/opt/pop-audit/venvs/report/
+```
+
+The service uses FastAPI and OpenPyXL.
+
+The report output directory is:
+
+```text
+/opt/pop-audit/reports/
+```
+
+Endpoint:
+
+```text
+POST /generate
+```
+
+The input includes the Site Code and the actual Orchestrator `results` object.
+
+The service produces Excel files named approximately:
+
+```text
+POP-Audit-2488-YYYYMMDD-HHMMSS.xlsx
+```
+
+The response includes:
+
+```text
+service
+site_code
+status
+filename
+path
+download_url
+```
+
+## Excel sheets already implemented
+
+The working report contains:
+
+```text
+Summary
+Devices
+Cisco
+Ericsson
+Ericsson Alarms
+RTN
+EBand
+```
+
+Earlier workbook validation confirmed that these sheets exist and that the Summary contained:
+
+```text
+Site Code        2488
+Overall Status   CRITICAL
+CISCO            PASS
+ERICSSON         CRITICAL
+RADIO            WARNING
+```
+
+A bug in the RTN report parser was fixed after a runtime error:
+
+```text
+AttributeError: 'str' object has no attribute 'get'
+```
+
+The original parser assumed that every modulation value was a dictionary.
+
+The fix made it tolerate strings, dictionaries, and lists where appropriate.
+
+After the fix, `create_workbook()` succeeded and returned:
+
+```text
+STATUS : CRITICAL
+```
+
+Do not undo this compatibility fix.
+
+## Required Excel changes
+
+The Excel report must remain consistent with the actual web results.
+
+Required changes:
+
+- Remove Capacity Health.
+- Consolidate RTN, EBand, NRay, and Intracom into one `Links` worksheet/section.
+- Display actual numeric RX/TX Difference and Modulation values.
+- Preserve link-specific health evaluation internally.
+- Include all discovered basebands.
+- Include the normal Cisco switch.
+- Include the NCS switch where it is correctly associated with the POP.
+- Preserve the existing Summary and other useful detailed information.
+- Do not fabricate unavailable metrics.
+
+After modifications, generate and inspect a fresh workbook using the Report Service virtual environment.
+
+The report must open successfully using OpenPyXL.
+
+---
+
+# 13. Gateway and Frontend
+
+Gateway source:
+
+```text
+/opt/pop-audit/gateway/app/main.py
+```
+
+Frontend:
+
+```text
+/opt/pop-audit/gateway/frontend/index.html
+/opt/pop-audit/gateway/frontend/static/style.css
+/opt/pop-audit/gateway/frontend/static/app.js
+```
+
+Python environment:
+
+```text
+/opt/pop-audit/venvs/gateway/
+```
+
+Port:
+
+```text
+8000
+```
+
+The frontend was created with HTML, CSS, and vanilla JavaScript.
+
+The Gateway serves:
+
+```text
+GET /
+GET /health
+POST /audit
+GET /audit/{job_id}
+GET /audit/{job_id}/report
+GET /audit/{job_id}/report/download
+```
+
+Static assets:
+
+```text
+/static/style.css
+/static/app.js
+```
+
+The frontend includes:
+
+- Site Code input.
+- Start Audit button.
+- Job status.
+- Polling of the asynchronous job.
+- Overall health result.
+- Cisco/Ericsson/Radio result cards.
+- Detailed result panels.
+- Excel download button.
+- Responsive styling.
+
+The Gateway was modified to bind to:
+
+```text
+0.0.0.0:8000
+```
+
+in the native systemd deployment, so it can be accessed from another computer on an allowed network.
+
+The frontend was tested through HTTP:
+
+```text
+GET /                   → HTML returned
+/static/style.css       → 200 OK
+/static/app.js          → 200 OK
+```
+
+The user confirmed that the frontend became accessible in a browser after correcting the bind address.
+
+## Gateway report behavior
+
+The Gateway calls the Orchestrator to retrieve a completed audit.
+
+It then returns report metadata through:
+
+```text
+GET /audit/{job_id}/report
+```
+
+Direct Excel download is provided through:
+
+```text
+GET /audit/{job_id}/report/download
+```
+
+The endpoint proxies the actual XLSX bytes from the Report Service and returns them to the browser.
+
+The Gateway also has fallback report generation logic for completed audits when report metadata is absent.
+
+This flow has been tested successfully.
+
+## Known dashboard limitation
+
+The first version of the radio table is not yet the required final presentation.
+
+The user wants a single unified `Links` table with numeric values and light styling, as specified in Sections 10 and 12.
+
+The bottom-of-page section with the latest ten logs from both Cisco devices also remains to be verified and implemented.
+
+The user also wants the second baseband and NCS switch to appear correctly in the dashboard.
+
+---
+
+# 14. Verified End-to-End Result
+
+A real Site Code `2488` audit was performed.
+
+The completed job used the standard Gateway and Orchestrator pipeline.
+
+A verified result was:
+
+```text
+JOB STATUS : COMPLETED
+AUDIT      : CRITICAL
+
+CISCO      : PASS
+ERICSSON   : CRITICAL
+RADIO      : WARNING
+
+RTN             : WARNING
+EBand Kurosh    : PASS
+EBand Zafar     : PASS
+```
+
+The corresponding Excel report was generated successfully.
+
+One verified report file was:
+
+```text
+/opt/pop-audit/reports/POP-Audit-2488-20260915-194519.xlsx
+```
+
+The file was downloaded through the Gateway to:
+
+```text
+/tmp/site-2488-report.xlsx
+```
+
+The downloaded workbook was validated with OpenPyXL and contained the expected sheets and Summary status values.
+
+The actual report file and job IDs above are historical test artifacts. Verify the current server state before relying on them.
+
+---
+
+# 15. Docker and Docker Compose Migration
+
+This is an active migration goal.
+
+The user wants all seven microservices containerized and controlled together using Docker Compose.
+
+The intended deployment is:
+
+```text
+Browser
+   |
+   v
+Gateway container
+   |
+   v
+Orchestrator container
+   |
+   +------------------+
+   |        |         |
+   v        v         v
+ Zabbix   Cisco   Ericsson
+ Service  Service  Service
+   |
+   v
+ Radio Service
+
+ Report Service
+```
+
+Use a shared internal Docker bridge network.
+
+The only application container expected to publish a host port is Gateway.
+
+The testing port was intended to be:
+
+```text
+Host 18000 → Gateway container 8000
+```
+
+The eventual production port should be:
+
+```text
+Host 8000 → Gateway container 8000
+```
+
+Do not switch production traffic until the test deployment passes acceptance checks.
+
+## Docker status last confirmed
+
+The host Docker Engine version was:
+
+```text
+Docker version 29.1.3
+```
+
+Docker service was active.
+
+At the time of the initial inspection:
+
+```text
+docker compose
+```
+
+was unavailable and returned:
+
+```text
+docker: unknown command: docker compose
+```
+
+`docker ps -a` showed no containers at that point.
+
+The user was instructed to install the Ubuntu Compose V2 plugin using:
+
+```bash
+apt-get update
+apt-get install -y docker-compose-v2
+```
+
+However, the last confirmed output did not prove that this installation completed successfully.
+
+Similarly, the last confirmed output did not prove that the full Compose file was successfully created, validated, and deployed.
+
+**Treat Docker Compose availability, Dockerfile creation, builds, and running containers as unverified until you inspect the current server.**
+
+## Intended Docker source layout
+
+Each microservice should have its own Dockerfile and dependency manifest.
+
+Expected files:
+
+```text
+/opt/pop-audit/gateway/Dockerfile
+/opt/pop-audit/gateway/requirements.txt
+
+/opt/pop-audit/orchestrator/Dockerfile
+/opt/pop-audit/orchestrator/requirements.txt
+
+/opt/pop-audit/zabbix-service/Dockerfile
+/opt/pop-audit/zabbix-service/requirements.txt
+
+/opt/pop-audit/cisco-service/Dockerfile
+/opt/pop-audit/cisco-service/requirements.txt
+
+/opt/pop-audit/ericsson-service/Dockerfile
+/opt/pop-audit/ericsson-service/requirements.txt
+
+/opt/pop-audit/radio-service/Dockerfile
+/opt/pop-audit/radio-service/requirements.txt
+
+/opt/pop-audit/report-service/Dockerfile
+/opt/pop-audit/report-service/requirements.txt
+```
+
+Intended Compose file:
+
+```text
+/opt/pop-audit/compose.yaml
+```
+
+Do not assume these files exist in their intended final form.
+
+Inspect them.
+
+## Dependency handling
+
+The native virtual environments were inspected.
+
+The services use Python 3.12.
+
+Known dependencies include:
+
+- FastAPI.
+- Uvicorn.
+- Pydantic.
+- Requests.
+- HTTPX.
+- Python-dotenv.
+- Netmiko.
+- Paramiko.
+- OpenPyXL.
+
+Some services have additional transitive dependencies.
+
+Requirements files were intended to be generated from the existing venvs using `pip freeze`.
+
+Verify compatibility with the actual chosen base images before considering container builds final.
+
+Do not perform unnecessary dependency upgrades.
+
+## Compose networking requirements
+
+The native environment uses internal URLs such as:
+
+```text
+http://127.0.0.1:8001
+http://127.0.0.1:8002
+http://127.0.0.1:8003
+http://127.0.0.1:8004
+http://127.0.0.1:8005
+http://127.0.0.1:8006
+```
+
+Those defaults are not suitable for communication between separate containers.
+
+Inside Compose, use service DNS names, for example:
+
+```text
+http://orchestrator:8001
+http://zabbix-service:8002
+http://cisco-service:8003
+http://ericsson-service:8004
+http://radio-service:8005
+http://report-service:8006
+```
+
+Configure the container environment correctly.
+
+Do not unintentionally change native behavior when moving to Compose.
+
+## Security requirements for Docker
+
+- Do not copy `.env` into image layers.
+- Use a restrictive `.dockerignore`.
+- Mount secrets only where necessary or inject needed variables.
+- Do not print secrets when inspecting Compose.
+- Do not expose internal service ports unnecessarily.
+- Publish only the Gateway.
+- Persist reports outside the container.
+- Use sensible restart policies such as `unless-stopped`.
+- Implement health checks but also perform functional tests.
+- Preserve the existing native deployment until cutover is validated.
+
+## Persistent report directory
+
+The host directory is:
+
+```text
+/opt/pop-audit/reports/
+```
+
+The Report Service should keep using it as a persistent volume:
+
+```yaml
+volumes:
+  - /opt/pop-audit/reports:/opt/pop-audit/reports
+```
+
+This ensures generated Excel reports survive container recreation.
+
+## Moshell connectivity in Docker
+
+The Ericsson service connects to the configured Moshell server at:
+
+```text
+172.20.10.28
+```
+
+Keep that integration working from inside the Ericsson container.
+
+Do not attempt to copy the remote Moshell executable into the container unless inspection proves it is needed.
+
+The existing design uses SSH to the separate Moshell host.
+
+---
+
+# 16. Docker Hub and GitHub
+
+The user wants the project organized as a collection of related microservice images and managed through Docker Compose.
+
+GitHub repository:
+
+```text
+https://github.com/AlirezaTorkhub/pop-audit.git
+```
+
+Branch:
+
+```text
+main
+```
+
+Inspect the current Git status and repository configuration before making changes.
+
+A previous attempt to tag/push an image used the placeholder namespace:
+
+```text
+YOUR_DOCKERHUB_USERNAME
+```
+
+Do not repeat that error.
+
+The user previously logged into Docker Hub successfully.
+
+Inspect the actual local Docker image names and existing authenticated Docker CLI context.
+
+Do not print authentication files or credentials.
+
+Use a consistent repository naming convention based on the actual Docker Hub namespace.
+
+Remember that Docker Hub repositories are separate image repositories; do not assume an arbitrary directory can be created within one repository and used as a container-image folder.
+
+Before publishing:
+
+1. Ensure all seven images build.
+2. Ensure images do not contain secrets.
+3. Use correct repository names and tags.
+4. Push each intended service image.
+5. Verify that each published image can be pulled.
+
+Never put Docker Hub credentials in Dockerfiles or Git.
+
+---
+
+# 17. Known Risks and Production Hardening
+
+The following issues require attention, but should be addressed in a controlled order.
+
+## 17.1 In-memory job storage
+
+The Orchestrator stores job state in RAM.
+
+Restarting it can remove jobs and their audit results.
+
+Persistent storage should eventually be introduced using the existing database environment and a carefully designed schema.
+
+Do not modify unrelated PostgreSQL objects.
+
+## 17.2 Discovery completeness
+
+The second baseband may be missing.
+
+NCS switches are not associated by Site Code alone.
+
+These issues must be fixed at the discovery/association layer before polishing the frontend.
+
+## 17.3 Historical analysis
+
+Twelve-hour persistence must use real monitoring evidence.
+
+Do not infer persistence from only the most recent sample.
+
+## 17.4 Log ordering
+
+The ten displayed switch logs must actually be the latest ten entries.
+
+Inspect command behavior and parser ordering.
+
+## 17.5 Report/download integration
+
+Verify that Docker networking does not break:
+
+```text
+Gateway → Report Service
+Orchestrator → Report Service
+```
+
+Verify the report mount path.
+
+## 17.6 SSH reliability
+
+Keep timeouts reasonable and handle connection failures without crashing the whole audit unnecessarily.
+
+Do not hide actual failures by reporting PASS.
+
+## 17.7 Container restart behavior
+
+A healthy container process does not necessarily mean the audit workflow works.
+
+Test service communication and end-to-end runs after container recreation.
+
+---
+
+# 18. Implementation Strategy
+
+Work incrementally.
+
+## Phase 1 — Inspect the current actual state
+
+Check:
+
+- Which Docker images exist.
+- Which containers exist.
+- Whether Compose is installed.
+- Whether `compose.yaml` exists.
+- Which systemd services are running.
+- Which ports are occupied.
+- The actual Git status.
+- Whether the latest frontend is installed.
+- Whether the current report integration remains functional.
+
+Do not assume earlier changes are still present.
+
+## Phase 2 — Fix the backend discovery issues
+
+Prioritize:
+
+1. Second baseband discovery.
+2. NCS candidate discovery and POP association.
+3. Multi-device handling in the Orchestrator and Cisco service.
+4. The last-ten-log API/data path.
+
+Test with Site `2225` and the known switch names.
+
+## Phase 3 — Correct radio historical analysis
+
+Inspect the real Zabbix history and trigger schemas.
+
+Implement the twelve-hour persistence logic with proper timestamps and recovery handling.
+
+Validate the numerical thresholds against the existing radio rules.
+
+## Phase 4 — Update Excel
+
+Remove Capacity Health and consolidate radio link presentation.
+
+Verify actual numeric output.
+
+## Phase 5 — Update the frontend
+
+Implement the unified Links table, colors, light background, persistence indicators, multi-baseband display, and two-switch logs section.
+
+Use actual data from Gateway APIs.
+
+## Phase 6 — Validate native deployment
+
+Before containerization, confirm the modified application still works in the native environment.
+
+Run Python syntax checks, service endpoint tests, and real Site Code audits.
+
+## Phase 7 — Complete Docker Compose migration
+
+Inspect the current Compose state.
+
+Fix configuration problems.
+
+Build the images and test on port `18000`.
+
+Do not shut down native services before testing the Docker deployment.
+
+## Phase 8 — End-to-end validation
+
+Validate:
+
+- Browser frontend.
+- Job creation and lifecycle.
+- All expected basebands.
+- Primary Cisco switch.
+- Associated NCS switch where applicable.
+- Ericsson Moshell.
+- All radio link types.
+- Numeric radio results.
+- Twelve-hour historical state.
+- Last ten logs per switch.
+- Excel generation and download.
+- Persistent job/report behavior where implemented.
+
+## Phase 9 — Production cutover and publishing
+
+Only after successful tests:
+
+- Plan a rollback-safe switch to Gateway port `8000`.
+- Disable duplicate native service execution only after confirming no conflicting workloads.
+- Publish clean Docker images to the correct Docker Hub namespace.
+- Verify repository contents and image tags.
+- Document Compose commands and operational troubleshooting.
+
+---
+
+# 19. Development and Command Rules
+
+I prefer copy-pasteable Bash commands with absolute paths.
+
+For large file edits, use a full-file replacement:
+
+```bash
+cat > /absolute/path/to/file <<'PY'
+...
+PY
+```
+
+Do not ask me to open a terminal and manually type Python code line by line.
+
+After each Python change, run:
+
+```bash
+/opt/pop-audit/venvs/<service>/bin/python3 -m py_compile /absolute/path/to/file.py
+```
+
+For containerized code, use the relevant image/build checks as well.
+
+Restart only the relevant service after a validated change.
+
+Do not uninstall or reinstall Docker without evidence that this is needed.
+
+Do not remove any existing containers, databases, Nginx, monitoring, or unrelated infrastructure.
+
+Do not expose secrets.
+
+Never invent actual monitoring values.
+
+Clearly distinguish:
+
+- Verified behavior.
+- Expected behavior.
+- Unverified assumptions.
+- Remaining implementation work.
+
+Keep the scope focused and deliver working, tested improvements.
+
+---
+
+# 20. Definition of Done
+
+The core application changes are complete when:
+
+- Capacity Health is removed.
+- The dashboard has one unified Links table for RTN, EBand, NRay, and Intracom.
+- The table displays the true numeric RX/TX Difference and Modulation values.
+- The table uses a light, milky background.
+- OK is green, Not OK is red, and Unknown is gray.
+- Twelve-hour persistence is calculated from real historical evidence.
+- All expected basebands are discovered.
+- Normal and NCS Cisco switches are associated correctly.
+- The last ten logs for each applicable Cisco switch appear at the bottom of the dashboard.
+- Excel contains equivalent information.
+- The existing working checks remain intact.
+
+Containerization is complete when:
+
+- All seven images build.
+- Compose validates.
+- All seven containers start and become healthy.
+- The Gateway works on the chosen host port.
+- Internal communications use Docker service names.
+- Zabbix access works inside the containers.
+- Moshell access works inside the Ericsson container.
+- Excel files persist outside the containers.
+- A real Site Code audit finishes successfully.
+- The dashboard displays the correct results.
+- Excel can be downloaded through the Gateway.
+- No unrelated host services were disrupted.
+
+Do not mark these items complete based only on successful syntax checks or image builds.
+
+---
+
+# 21. First Task for the New Chat
+
+Start by inspecting the actual server state.
+
+Do not immediately rewrite code or recreate the Docker deployment.
+
+Run targeted checks for:
+
+1. `docker compose version`.
+2. `docker ps -a`.
+3. Existing local image names.
+4. Whether `/opt/pop-audit/compose.yaml` exists.
+5. The current Docker Compose configuration, without exposing secrets.
+6. Git repository status.
+7. The current source code for Discovery, Radio, Cisco, frontend, and Excel.
+8. Current systemd service state.
+9. Current application API health.
+
+Then produce a short evidence-based table showing:
+
+- What is verified working.
+- What already exists but is unverified.
+- What remains to implement.
+- The safest order of changes.
+
+After that, continue with the discovery defects and the requested Links presentation, then complete Compose testing.
+
+**The main objective is to finish the existing POP Audit application correctly and migrate it to Docker Compose without disrupting the current server or losing working functionality.**
