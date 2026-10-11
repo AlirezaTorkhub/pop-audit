@@ -1,0 +1,569 @@
+from __future__ import annotations
+
+import re
+from typing import Any
+
+
+DESTINATIONS = {
+    "BOLVARSHAHRZAD",
+    "BORJMINA",
+    "GHOBA",
+    "HOSEINIEHERSHAD",
+    "MAHABGHODS",
+    "SHAMS",
+    "ZOMOROD",
+}
+
+
+def to_float(value: Any):
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_int(value: Any):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def aggregate_status(statuses: list[str]) -> str:
+    order = {
+        "CRITICAL": 5,
+        "WARNING": 4,
+        "UNKNOWN": 3,
+        "NOT_AVAILABLE": 2,
+        "PASS": 1,
+    }
+
+    if not statuses:
+        return "UNKNOWN"
+
+    return max(statuses, key=lambda x: order.get(x, 3))
+
+
+def decode_zabbix_encoded(text: str) -> str:
+    """
+    Decode strings such as:
+
+    26.26.98.111.97.114.100.61.49
+
+    into their ASCII representation where possible.
+    """
+
+    if not text:
+        return text
+
+    parts = text.split(".")
+
+    if not parts:
+        return text
+
+    try:
+        decoded = "".join(
+            chr(int(x))
+            for x in parts
+            if 0 <= int(x) <= 255
+        )
+    except (TypeError, ValueError):
+        return text
+
+    printable = sum(
+        1
+        for c in decoded
+        if c.isprintable()
+    )
+
+    if len(decoded) > 0 and printable / len(decoded) > 0.85:
+        return decoded
+
+    return text
+
+
+def evaluate_modulation(value: Any) -> dict:
+    value = to_float(value)
+
+    if value is None:
+        return {
+            "status": "NOT_AVAILABLE",
+            "value": None,
+            "threshold": 13,
+            "description": "Modulation value unavailable",
+        }
+
+    if value < 13:
+        return {
+            "status": "WARNING",
+            "value": value,
+            "threshold": 13,
+            "description": "Modulation below 13",
+        }
+
+    return {
+        "status": "PASS",
+        "value": value,
+        "threshold": 13,
+        "description": "Modulation is normal",
+    }
+
+
+def evaluate_difference(value: Any) -> dict:
+    value = to_float(value)
+
+    if value is None:
+        return {
+            "status": "NOT_AVAILABLE",
+            "value": None,
+            "threshold": 7,
+            "description": "Difference unavailable",
+        }
+
+    if value > 7:
+        return {
+            "status": "WARNING",
+            "value": value,
+            "threshold": 7,
+            "description": "Difference above 7",
+        }
+
+    return {
+        "status": "PASS",
+        "value": value,
+        "threshold": 7,
+        "description": "Difference is normal",
+    }
+
+
+def evaluate_traffic(value: Any) -> dict:
+    value = to_float(value)
+
+    if value is None:
+        return {
+            "status": "NOT_AVAILABLE",
+            "value": None,
+            "warning_threshold": 350_000_000,
+            "high_threshold": 410_000_000,
+            "description": "Traffic unavailable",
+        }
+
+    if value > 410_000_000:
+        return {
+            "status": "WARNING",
+            "value": value,
+            "warning_threshold": 350_000_000,
+            "high_threshold": 410_000_000,
+            "description": "Traffic above 410 Mbps",
+        }
+
+    if value > 350_000_000:
+        return {
+            "status": "WARNING",
+            "value": value,
+            "warning_threshold": 350_000_000,
+            "high_threshold": 410_000_000,
+            "description": "Traffic above 350 Mbps",
+        }
+
+    return {
+        "status": "PASS",
+        "value": value,
+        "warning_threshold": 350_000_000,
+        "high_threshold": 410_000_000,
+        "description": "Traffic is normal",
+    }
+
+def evaluate_packet_loss(value: Any) -> dict:
+    value = to_float(value)
+
+    if value is None:
+        return {
+            "status": "NOT_AVAILABLE",
+            "value": None,
+            "warning_threshold": 5,
+            "critical_threshold": 80,
+            "description": "Packet loss unavailable",
+        }
+
+    if value > 80:
+        return {
+            "status": "CRITICAL",
+            "value": value,
+            "warning_threshold": 5,
+            "critical_threshold": 80,
+            "description": "Packet loss above 80%",
+        }
+
+    if value > 20:
+        return {
+            "status": "WARNING",
+            "value": value,
+            "warning_threshold": 5,
+            "critical_threshold": 80,
+            "description": "Packet loss above 20%",
+        }
+
+    if value >= 5:
+        return {
+            "status": "WARNING",
+            "value": value,
+            "warning_threshold": 5,
+            "critical_threshold": 80,
+            "description": "Packet loss at/above 5%",
+        }
+
+    return {
+        "status": "PASS",
+        "value": value,
+        "warning_threshold": 5,
+        "critical_threshold": 80,
+        "description": "Packet loss is normal",
+    }
+
+
+
+def item_map(items: list[dict]) -> dict[str, dict]:
+    return {
+        str(item.get("key_", "")): item
+        for item in items
+        if item.get("key_")
+    }
+
+
+def item_by_id(items: list[dict], itemid: str) -> dict | None:
+    sid = str(itemid)
+
+    for item in items:
+        if str(item.get("itemid")) == sid:
+            return item
+
+    return None
+
+
+def extract_item_ids(expression: str) -> list[str]:
+    return re.findall(r"\{(\d+)\}", expression or "")
+
+
+def extract_destination(description: str) -> str | None:
+    upper = (description or "").upper()
+
+    for destination in DESTINATIONS:
+        if destination in upper:
+            return destination
+
+    return None
+
+
+def build_trigger_index(triggers: list[dict]) -> dict[str, list[dict]]:
+    """
+    Build itemid -> triggers mapping.
+
+    Zabbix trigger expressions contain identifiers inside braces,
+    but the reliable item mapping is provided by trigger.get()
+    through trigger["items"].
+    """
+
+    result: dict[str, list[dict]] = {}
+
+    for trigger in triggers:
+
+        # Preferred source: Zabbix selectItems
+        for item in trigger.get("items", []) or []:
+
+            itemid = str(
+                item.get("itemid", "")
+            ).strip()
+
+            if not itemid:
+                continue
+
+            result.setdefault(
+                itemid,
+                []
+            ).append(trigger)
+
+        # Fallback: extract ids from expression
+        # in case a trigger has no selectItems.
+        if not trigger.get("items"):
+
+            expression = trigger.get(
+                "expression",
+                ""
+            )
+
+            for itemid in extract_item_ids(
+                expression
+            ):
+
+                result.setdefault(
+                    itemid,
+                    []
+                ).append(trigger)
+
+    return result
+
+def modulation_links(
+    items: list[dict],
+    triggers: list[dict],
+) -> list[dict]:
+
+    trigger_index = build_trigger_index(
+        triggers
+    )
+
+    result = []
+
+    for item in items:
+
+        key = str(
+            item.get("key_", "")
+        )
+
+        if not key.lower().startswith(
+            "modulation_huawei["
+        ):
+            continue
+
+        itemid = str(
+            item.get("itemid", "")
+        )
+
+        related = trigger_index.get(
+            itemid,
+            []
+        )
+
+        destinations = []
+
+        for trigger in related:
+
+            destination = extract_destination(
+                trigger.get(
+                    "description",
+                    ""
+                )
+            )
+
+            if (
+                destination
+                and destination not in destinations
+            ):
+                destinations.append(
+                    destination
+                )
+
+        # Preserve an unbound modulation item
+        # rather than silently discarding it.
+        if not destinations:
+            destinations = [None]
+
+        for destination in destinations:
+
+            result.append({
+                "itemid": itemid,
+                "key": key,
+                "link": (
+                    key[
+                        len("Modulation_huawei[")
+                        :-1
+                    ]
+                    if key.endswith("]")
+                    else key
+                ),
+                "destination": destination,
+                "value": to_float(
+                    item.get("lastvalue")
+                ),
+                "clock": item.get(
+                    "lastclock"
+                ),
+            })
+
+    return result
+
+def traffic_items(
+    items: list[dict],
+) -> list[dict]:
+
+    result = []
+
+    for item in items:
+        key = str(item.get("key_", ""))
+
+        if not (
+            key.lower().startswith("rx_traffic[")
+            or key.lower().startswith("tx_traffic[")
+        ):
+            continue
+
+        direction = (
+            "RX"
+            if key.lower().startswith("rx_traffic[")
+            else "TX"
+        )
+
+        encoded = key.split("[", 1)[1].rstrip("]")
+
+        result.append({
+            "itemid": str(item.get("itemid")),
+            "key": key,
+            "direction": direction,
+            "source": encoded,
+            "decoded_source": decode_zabbix_encoded(encoded),
+            "value": to_float(item.get("lastvalue")),
+            "clock": item.get("lastclock"),
+        })
+
+    return result
+
+
+def difference_items(
+    items: list[dict],
+) -> list[dict]:
+
+    result = []
+
+    for item in items:
+        key = str(item.get("key_", ""))
+
+        if not key.lower().startswith("rx_tx_diff_"):
+            continue
+
+        destination = key[len("rx_tx_diff_"):]
+
+        if destination.endswith("_1"):
+            destination = destination[:-2]
+
+        result.append({
+            "itemid": str(item.get("itemid")),
+            "key": key,
+            "destination": destination,
+            "value": to_float(item.get("lastvalue")),
+            "clock": item.get("lastclock"),
+        })
+
+    return result
+
+
+def analyze_rtn(
+    items: list[dict],
+    triggers: list[dict],
+) -> dict:
+
+    modulation = modulation_links(items, triggers)
+    differences = difference_items(items)
+    traffic = traffic_items(items)
+
+    link_results: dict[str, dict] = {}
+
+    for entry in differences:
+        destination = entry["destination"]
+
+        if destination not in DESTINATIONS:
+            continue
+
+        link_results.setdefault(
+            destination,
+            {
+                "destination": destination,
+                "modulation": [],
+                "difference": None,
+                "traffic": [],
+                "statuses": [],
+            },
+        )
+
+        check = evaluate_difference(entry["value"])
+
+        link_results[destination]["difference"] = {
+            "itemid": entry["itemid"],
+            "value": entry["value"],
+            **check,
+        }
+
+        link_results[destination]["statuses"].append(
+            check["status"]
+        )
+
+    for entry in modulation:
+        destination = entry["destination"]
+
+        if not destination:
+            continue
+
+        link_results.setdefault(
+            destination,
+            {
+                "destination": destination,
+                "modulation": [],
+                "difference": None,
+                "traffic": [],
+                "statuses": [],
+            },
+        )
+
+        check = evaluate_modulation(entry["value"])
+
+        link_results[destination]["modulation"].append({
+            "itemid": entry["itemid"],
+            "link": entry["link"],
+            "value": entry["value"],
+            **check,
+        })
+
+        link_results[destination]["statuses"].append(
+            check["status"]
+        )
+
+    # Traffic currently remains item-level because the encoded
+    # Huawei source string must be resolved against production
+    # mapping before assigning it to a destination.
+    traffic_results = []
+
+    for entry in traffic:
+        check = evaluate_traffic(entry["value"])
+
+        traffic_results.append({
+            "itemid": entry["itemid"],
+            "direction": entry["direction"],
+            "source": entry["source"],
+            "decoded_source": entry["decoded_source"],
+            "value": entry["value"],
+            **check,
+        })
+
+    for link in link_results.values():
+        link["status"] = aggregate_status(
+            link["statuses"]
+        )
+
+        link.pop("statuses", None)
+
+    overall_status = aggregate_status(
+        [
+            link["status"]
+            for link in link_results.values()
+        ]
+        + [
+            item["status"]
+            for item in traffic_results
+            if item["status"] not in {"NOT_AVAILABLE"}
+        ]
+    )
+
+    return {
+        "type": "RTN",
+        "status": overall_status,
+        "summary": {
+            "link_count": len(link_results),
+            "modulation_count": len(modulation),
+            "difference_count": len(differences),
+            "traffic_count": len(traffic_results),
+        },
+        "links": list(link_results.values()),
+        "traffic": traffic_results,
+    }

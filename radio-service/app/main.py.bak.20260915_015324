@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import requests
+from fastapi import FastAPI, HTTPException
+
+from app.eband import analyze_eband
+from app.rtn import analyze_rtn
+
+
+app = FastAPI(
+    title="POP Audit Radio Service",
+    version="1.0.0",
+)
+
+
+ZABBIX_SERVICE_URL = os.getenv(
+    "ZABBIX_SERVICE_URL",
+    "http://127.0.0.1:8002",
+)
+
+
+def zabbix_get(
+    path: str,
+    timeout: int = 30,
+) -> dict[str, Any]:
+
+    url = f"{ZABBIX_SERVICE_URL}{path}"
+
+    response = requests.get(
+        url,
+        timeout=timeout,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def get_zabbix_host_items(
+    hostid: str,
+) -> list[dict]:
+
+    data = zabbix_get(
+        f"/host/{hostid}/items"
+    )
+
+    return data.get("items", [])
+
+
+def get_zabbix_host_triggers(
+    hostid: str,
+) -> list[dict]:
+
+    data = zabbix_get(
+        f"/host/{hostid}/triggers"
+    )
+
+    return data.get("triggers", [])
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "radio-service",
+    }
+
+
+@app.post("/analyze")
+def analyze(payload: dict):
+
+    links = payload.get(
+        "links",
+        payload.get("radio_links", [])
+    )
+
+    if not isinstance(links, list):
+        raise HTTPException(
+            status_code=400,
+            detail="links must be a list",
+        )
+
+    results = []
+
+    for link in links:
+
+        hostid = str(link.get("hostid", ""))
+        radio_type = str(
+            link.get("type", "")
+        ).upper()
+
+        if not hostid:
+            results.append({
+                **link,
+                "status": "UNKNOWN",
+                "error": "Missing hostid",
+            })
+            continue
+
+        try:
+
+            items = get_zabbix_host_items(
+                hostid
+            )
+
+            if radio_type == "EBAND":
+
+                result = analyze_eband(
+                    items
+                )
+
+            elif radio_type == "RTN":
+
+                triggers = get_zabbix_host_triggers(
+                    hostid
+                )
+
+                result = analyze_rtn(
+                    items,
+                    triggers,
+                )
+
+            else:
+
+                result = {
+                    "type": radio_type,
+                    "status": "NOT_AVAILABLE",
+                    "reason": (
+                        "Analyzer not implemented"
+                    ),
+                }
+
+            results.append({
+                **link,
+                "analysis": result,
+            })
+
+        except Exception as exc:
+
+            results.append({
+                **link,
+                "status": "UNKNOWN",
+                "error": str(exc),
+            })
+
+    statuses = []
+
+    for result in results:
+
+        analysis = result.get(
+            "analysis"
+        )
+
+        if isinstance(analysis, dict):
+            status = analysis.get("status")
+
+            if status:
+                statuses.append(status)
+
+    priority = {
+        "CRITICAL": 5,
+        "WARNING": 4,
+        "UNKNOWN": 3,
+        "NOT_AVAILABLE": 2,
+        "PASS": 1,
+    }
+
+    overall_status = (
+        max(
+            statuses,
+            key=lambda x: priority.get(x, 3),
+        )
+        if statuses
+        else "UNKNOWN"
+    )
+
+    return {
+        "status": overall_status,
+        "link_count": len(results),
+        "links": results,
+    }
+
+

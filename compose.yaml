@@ -1,0 +1,234 @@
+name: pop-audit
+
+services:
+  gateway:
+    build:
+      context: ./gateway
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      ORCHESTRATOR_URL: "http://orchestrator:8001"
+      REPORT_SERVICE_URL: "http://report-service:8006"
+    ports:
+      - "${POP_AUDIT_HOST_PORT:-8000}:8000"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      report-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8000)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      ZABBIX_SERVICE_URL: "http://zabbix-service:8002"
+      CISCO_SERVICE_URL: "http://cisco-service:8003"
+      ERICSSON_SERVICE_URL: "http://ericsson-service:8004"
+      RADIO_SERVICE_URL: "http://radio-service:8005"
+      REPORT_SERVICE_URL: "http://report-service:8006"
+    depends_on:
+      zabbix-service:
+        condition: service_healthy
+      cisco-service:
+        condition: service_healthy
+      ericsson-service:
+        condition: service_healthy
+      radio-service:
+        condition: service_healthy
+      report-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8001)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  zabbix-service:
+    build:
+      context: ./zabbix-service
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      ZABBIX_URL: "${ZABBIX_URL:?ZABBIX_URL is required in config/.env}"
+      ZABBIX_USER: "${ZABBIX_USER:?ZABBIX_USER is required in config/.env}"
+      ZABBIX_PASSWORD: "${ZABBIX_PASSWORD:?ZABBIX_PASSWORD is required in config/.env}"
+      ZABBIX_GROUP_ENODEB: "${ZABBIX_GROUP_ENODEB:?ZABBIX_GROUP_ENODEB is required in config/.env}"
+      ZABBIX_GROUP_SWITCH: "${ZABBIX_GROUP_SWITCH:?ZABBIX_GROUP_SWITCH is required in config/.env}"
+      ZABBIX_GROUP_RADIO: "${ZABBIX_GROUP_RADIO:?ZABBIX_GROUP_RADIO is required in config/.env}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8002)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cisco-service:
+    build:
+      context: ./cisco-service
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      SSH_USERNAME: "${SSH_USERNAME:?SSH_USERNAME is required in config/.env}"
+      SSH_PASSWORD: "${SSH_PASSWORD:?SSH_PASSWORD is required in config/.env}"
+      SSH_CONNECT_TIMEOUT: "${SSH_CONNECT_TIMEOUT:-10}"
+      SSH_COMMAND_TIMEOUT: "${SSH_COMMAND_TIMEOUT:-30}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8003)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ericsson-service:
+    build:
+      context: ./ericsson-service
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      MOSHELL_HOST: "${MOSHELL_HOST:?MOSHELL_HOST is required in config/.env}"
+      MOSHELL_USER: "${MOSHELL_USER:?MOSHELL_USER is required in config/.env}"
+      MOSHELL_PASSWORD: "${MOSHELL_PASSWORD:?MOSHELL_PASSWORD is required in config/.env}"
+      SSH_CONNECT_TIMEOUT: "${SSH_CONNECT_TIMEOUT:-10}"
+      SSH_COMMAND_TIMEOUT: "${SSH_COMMAND_TIMEOUT:-30}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8004)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  radio-service:
+    build:
+      context: ./radio-service
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      ZABBIX_SERVICE_URL: "http://zabbix-service:8002"
+      DIFFERENCE_THRESHOLD: "${DIFFERENCE_THRESHOLD:-7}"
+      MODULATION_EXPECTED: "${MODULATION_EXPECTED:-13}"
+      RADIO_ANALYSIS_HOURS: "${RADIO_ANALYSIS_HOURS:-6}"
+      RADIO_HISTORY_DAYS: "${RADIO_HISTORY_DAYS:-7}"
+      MAX_CONCURRENT_RADIO_LINKS: "${MAX_CONCURRENT_RADIO_LINKS:-4}"
+    depends_on:
+      zabbix-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8005)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  report-service:
+    build:
+      context: ./report-service
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      REPORT_DIR: "/opt/pop-audit/reports"
+    volumes:
+      - /opt/pop-audit/reports:/opt/pop-audit/reports
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8006)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  pop-audit-internal:
+    name: pop-audit-internal
+    driver: bridge

@@ -1,0 +1,96 @@
+import os
+
+import httpx
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+from dotenv import load_dotenv
+
+
+load_dotenv(
+    "/opt/pop-audit/config/.env"
+)
+
+ORCHESTRATOR_URL = os.environ[
+    "ORCHESTRATOR_URL"
+]
+
+
+app = FastAPI(
+    title="POP Audit Gateway",
+    version="1.0.0",
+)
+
+
+class AuditRequest(BaseModel):
+    site_code: str
+
+
+@app.get("/health")
+def health():
+
+    return {
+        "service":
+            "gateway",
+        "status":
+            "ok",
+    }
+
+
+@app.post("/audit")
+async def create_audit(
+    request: AuditRequest,
+):
+
+    site_code = request.site_code.strip()
+
+    if not site_code:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Site code is required.",
+        )
+
+    async with httpx.AsyncClient(
+        timeout=30
+    ) as client:
+
+        response = await client.post(
+            f"{ORCHESTRATOR_URL}/audit",
+            json={
+                "site_code": site_code
+            },
+        )
+
+    if response.status_code >= 400:
+
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=response.text,
+        )
+
+    return response.json()
+
+
+@app.get("/audit/{job_id}")
+async def get_audit(
+    job_id: str,
+):
+
+    async with httpx.AsyncClient(
+        timeout=30
+    ) as client:
+
+        response = await client.get(
+            f"{ORCHESTRATOR_URL}/audit/{job_id}"
+        )
+
+    if response.status_code >= 400:
+
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=response.text,
+        )
+
+    return response.json()

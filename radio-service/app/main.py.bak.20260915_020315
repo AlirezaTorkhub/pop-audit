@@ -1,0 +1,243 @@
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import requests
+from fastapi import FastAPI, HTTPException
+
+from app.eband import analyze_eband
+from app.rtn import analyze_rtn
+
+
+app = FastAPI(
+    title="POP Audit Radio Service",
+    version="1.0.0",
+)
+
+
+ZABBIX_SERVICE_URL = os.getenv(
+    "ZABBIX_SERVICE_URL",
+    "http://127.0.0.1:8002",
+)
+
+
+STATUS_PRIORITY = {
+    "CRITICAL": 5,
+    "WARNING": 4,
+    "UNKNOWN": 3,
+    "NOT_AVAILABLE": 2,
+    "PASS": 1,
+}
+
+
+def aggregate_status(statuses: list[str]) -> str:
+    if not statuses:
+        return "UNKNOWN"
+
+    return max(
+        statuses,
+        key=lambda x: STATUS_PRIORITY.get(x, 3),
+    )
+
+
+def zabbix_get(
+    path: str,
+    timeout: int = 30,
+) -> dict[str, Any]:
+
+    url = f"{ZABBIX_SERVICE_URL}{path}"
+
+    response = requests.get(
+        url,
+        timeout=timeout,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def get_zabbix_host_items(
+    hostid: str,
+) -> list[dict]:
+
+    data = zabbix_get(
+        f"/host/{hostid}/items"
+    )
+
+    return data.get("items", [])
+
+
+def get_zabbix_host_triggers(
+    hostid: str,
+) -> list[dict]:
+
+    data = zabbix_get(
+        f"/host/{hostid}/triggers"
+    )
+
+    return data.get("triggers", [])
+
+
+def normalize_link(link: dict) -> dict:
+    """
+    Normalize discovery output.
+
+    Discovery currently uses:
+        zabbix_hostid
+
+    Older/direct callers may use:
+        hostid
+    """
+
+    hostid = (
+        link.get("hostid")
+        or link.get("zabbix_hostid")
+    )
+
+    radio_type = (
+        link.get("type")
+        or link.get("link_type")
+        or ""
+    )
+
+    normalized = {
+        **link,
+        "hostid": str(hostid)
+        if hostid is not None
+        else "",
+        "type": str(radio_type).upper(),
+    }
+
+    return normalized
+
+
+def extract_status(
+    analysis: dict,
+) -> str:
+
+    status = analysis.get("status")
+
+    if status in STATUS_PRIORITY:
+        return status
+
+    return "UNKNOWN"
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "radio-service",
+    }
+
+
+@app.post("/analyze")
+def analyze(payload: dict):
+
+    links = payload.get(
+        "links",
+        payload.get("radio_links", []),
+    )
+
+    if not isinstance(links, list):
+        raise HTTPException(
+            status_code=400,
+            detail="links must be a list",
+        )
+
+    results = []
+
+    for raw_link in links:
+
+        link = normalize_link(
+            raw_link
+        )
+
+        hostid = link.get(
+            "hostid",
+            "",
+        )
+
+        radio_type = link.get(
+            "type",
+            "",
+        )
+
+        if not hostid:
+
+            results.append({
+                **link,
+                "status": "UNKNOWN",
+                "error": "Missing Zabbix hostid",
+            })
+
+            continue
+
+        try:
+
+            items = get_zabbix_host_items(
+                hostid
+            )
+
+            if radio_type == "EBAND":
+
+                analysis = analyze_eband(
+                    items
+                )
+
+            elif radio_type == "RTN":
+
+                triggers = (
+                    get_zabbix_host_triggers(
+                        hostid
+                    )
+                )
+
+                analysis = analyze_rtn(
+                    items,
+                    triggers,
+                )
+
+            else:
+
+                analysis = {
+                    "type": radio_type,
+                    "status": "NOT_AVAILABLE",
+                    "reason": (
+                        "Analyzer not implemented"
+                    ),
+                }
+
+            results.append({
+                **link,
+                "status": extract_status(
+                    analysis
+                ),
+                "analysis": analysis,
+            })
+
+        except Exception as exc:
+
+            results.append({
+                **link,
+                "status": "UNKNOWN",
+                "error": str(exc),
+            })
+
+    overall_status = aggregate_status(
+        [
+            result.get(
+                "status",
+                "UNKNOWN",
+            )
+            for result in results
+        ]
+    )
+
+    return {
+        "status": overall_status,
+        "link_count": len(results),
+        "links": results,
+    }

@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>POP Audit</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+</head>
+
+<body>
+
+<div class="app">
+
+    <header class="topbar">
+        <div>
+            <div class="brand">POP AUDIT</div>
+            <div class="subtitle">
+                Site Health Check Platform
+            </div>
+        </div>
+
+        <div class="header-status">
+            <span id="apiStatusDot" class="status-dot"></span>
+            <span id="apiStatusText">Checking API...</span>
+        </div>
+    </header>
+
+    <main>
+
+        <!-- ================================================= -->
+        <!-- AUDIT CONTROL -->
+        <!-- ================================================= -->
+
+        <section class="panel control-panel">
+
+            <div class="section-title">
+                <div>
+                    <h2>Start Audit</h2>
+                    <p>
+                        Enter Site Code to discover and audit the complete POP.
+                    </p>
+                </div>
+            </div>
+
+            <div class="audit-form">
+
+                <div class="field">
+                    <label for="siteCode">
+                        Site Code
+                    </label>
+
+                    <input
+                        id="siteCode"
+                        type="text"
+                        inputmode="numeric"
+                        autocomplete="off"
+                        placeholder="Example: 2488"
+                    >
+                </div>
+
+                <button
+                    id="startAuditBtn"
+                    class="btn btn-primary"
+                >
+                    START AUDIT
+                </button>
+
+            </div>
+
+            <div
+                id="formMessage"
+                class="message hidden"
+            ></div>
+
+        </section>
+
+
+        <!-- ================================================= -->
+        <!-- JOB -->
+        <!-- ================================================= -->
+
+        <section
+            id="jobPanel"
+            class="panel hidden"
+        >
+
+            <div class="job-header">
+
+                <div>
+                    <div class="eyebrow">
+                        CURRENT AUDIT
+                    </div>
+
+                    <div
+                        id="jobId"
+                        class="job-id"
+                    >
+                        -
+                    </div>
+                </div>
+
+                <div
+                    id="jobStatusBadge"
+                    class="status-badge unknown"
+                >
+                    UNKNOWN
+                </div>
+
+            </div>
+
+            <div class="progress-wrap">
+
+                <div class="progress-labels">
+                    <span id="phaseDiscovery">DISCOVERY</span>
+                    <span id="phaseRunning">RUNNING</span>
+                    <span id="phaseCompleted">COMPLETED</span>
+                </div>
+
+                <div class="progress-track">
+                    <div
+                        id="progressBar"
+                        class="progress-bar"
+                    ></div>
+                </div>
+
+                <div
+                    id="jobStatusText"
+                    class="job-status-text"
+                >
+                    Waiting...
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ================================================= -->
+        <!-- OVERALL -->
+        <!-- ================================================= -->
+
+        <section
+            id="resultPanel"
+            class="hidden"
+        >
+
+            <div class="overall-row">
+
+                <div class="overall-card">
+                    <div class="eyebrow">
+                        OVERALL STATUS
+                    </div>
+
+                    <div
+                        id="overallStatus"
+                        class="overall-status unknown"
+                    >
+                        UNKNOWN
+                    </div>
+
+                    <div
+                        id="siteSummary"
+                        class="overall-meta"
+                    >
+                        Site -
+                    </div>
+                </div>
+
+                <div class="action-card">
+
+                    <button
+                        id="excelBtn"
+                        class="btn btn-success"
+                        disabled
+                    >
+                        DOWNLOAD EXCEL
+                    </button>
+
+                    <button
+                        id="pdfBtn"
+                        class="btn btn-secondary"
+                        disabled
+                    >
+                        DOWNLOAD PDF
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <!-- ================================================= -->
+            <!-- SERVICE CARDS -->
+            <!-- ================================================= -->
+
+            <div class="service-grid">
+
+                <div
+                    id="cardCisco"
+                    class="service-card unknown"
+                >
+                    <div class="service-name">
+                        CISCO
+                    </div>
+
+                    <div
+                        id="statusCisco"
+                        class="service-status"
+                    >
+                        UNKNOWN
+                    </div>
+
+                    <div
+                        id="metaCisco"
+                        class="service-meta"
+                    >
+                        Waiting for audit
+                    </div>
+                </div>
+
+
+                <div
+                    id="cardEricsson"
+                    class="service-card unknown"
+                >
+                    <div class="service-name">
+                        ERICSSON
+                    </div>
+
+                    <div
+                        id="statusEricsson"
+                        class="service-status"
+                    >
+                        UNKNOWN
+                    </div>
+
+                    <div
+                        id="metaEricsson"
+                        class="service-meta"
+                    >
+                        Waiting for audit
+                    </div>
+                </div>
+
+
+                <div
+                    id="cardRadio"
+                    class="service-card unknown"
+                >
+                    <div class="service-name">
+                        RADIO
+                    </div>
+
+                    <div
+                        id="statusRadio"
+                        class="service-status"
+                    >
+                        UNKNOWN
+                    </div>
+
+                    <div
+                        id="metaRadio"
+                        class="service-meta"
+                    >
+                        Waiting for audit
+                    </div>
+                </div>
+
+            </div>
+
+
+            <!-- ================================================= -->
+            <!-- DETAILS -->
+            <!-- ================================================= -->
+
+            <div class="details-grid">
+
+                <section class="detail-panel">
+
+                    <div class="detail-header">
+                        <div>
+                            <h3>Cisco</h3>
+                            <span>
+                                Switch health and interfaces
+                            </span>
+                        </div>
+
+                        <div
+                            id="ciscoDetailStatus"
+                            class="small-status unknown"
+                        >
+                            UNKNOWN
+                        </div>
+                    </div>
+
+                    <div id="ciscoDetails">
+                        <div class="empty-state">
+                            No data
+                        </div>
+                    </div>
+
+                </section>
+
+
+                <section class="detail-panel">
+
+                    <div class="detail-header">
+                        <div>
+                            <h3>Ericsson</h3>
+                            <span>
+                                Cells, alarms and clock
+                            </span>
+                        </div>
+
+                        <div
+                            id="ericssonDetailStatus"
+                            class="small-status unknown"
+                        >
+                            UNKNOWN
+                        </div>
+                    </div>
+
+                    <div id="ericssonDetails">
+                        <div class="empty-state">
+                            No data
+                        </div>
+                    </div>
+
+                </section>
+
+
+                <section class="detail-panel detail-panel-wide">
+
+                    <div class="detail-header">
+                        <div>
+                            <h3>Radio</h3>
+                            <span>
+                                RTN and EBand link health
+                            </span>
+                        </div>
+
+                        <div
+                            id="radioDetailStatus"
+                            class="small-status unknown"
+                        >
+                            UNKNOWN
+                        </div>
+                    </div>
+
+                    <div id="radioDetails">
+                        <div class="empty-state">
+                            No data
+                        </div>
+                    </div>
+
+                </section>
+
+            </div>
+
+
+            <!-- ================================================= -->
+            <!-- RAW SUMMARY -->
+            <!-- ================================================= -->
+
+            <section class="panel audit-summary-panel">
+
+                <div class="detail-header">
+                    <div>
+                        <h3>Audit Summary</h3>
+                        <span>
+                            Service-level result aggregation
+                        </span>
+                    </div>
+                </div>
+
+                <div id="auditSummary"></div>
+
+            </section>
+
+        </section>
+
+    </main>
+
+    <footer>
+        POP Audit Platform
+    </footer>
+
+</div>
+
+<script src="/static/app.js"></script>
+
+</body>
+</html>

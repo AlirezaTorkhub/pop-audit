@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+
+app = FastAPI(
+    title="POP Audit - Ericsson Service",
+    version="1.0.0",
+)
+
+
+@app.get("/health")
+def health():
+    return {
+        "service": "ericsson",
+        "status": "ok",
+    }
+
+
+@app.post("/check")
+def check(payload: dict):
+
+    basebands = payload.get(
+        "basebands",
+        [],
+    )
+
+    results = []
+
+    for bb in basebands:
+
+        results.append({
+            "hostname": bb.get("hostname"),
+            "ip": bb.get("ip"),
+            "zabbix_hostid": bb.get("zabbix_hostid"),
+            "status": "NOT_AVAILABLE",
+            "message": (
+                "Ericsson check engine is not implemented yet."
+            ),
+        })
+
+    return {
+        "service": "ericsson",
+        "site_code": payload.get("site_code"),
+        "status": "NOT_AVAILABLE",
+        "results": results,
+    }

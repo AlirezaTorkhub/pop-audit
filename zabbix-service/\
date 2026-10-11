@@ -1,0 +1,336 @@
+import os
+import time
+
+import requests
+
+from dotenv import load_dotenv
+
+
+load_dotenv("/opt/pop-audit/config/.env")
+
+
+class ZabbixClient:
+
+    def __init__(self):
+
+        self.base_url = (
+            os.environ["ZABBIX_URL"]
+            .rstrip("/")
+        )
+
+        self.api_url = (
+            f"{self.base_url}/api_jsonrpc.php"
+        )
+
+        self.username = os.environ[
+            "ZABBIX_USER"
+        ]
+
+        self.password = os.environ[
+            "ZABBIX_PASSWORD"
+        ]
+
+        self.auth = None
+
+    # =========================================================
+    # GENERIC API CALL
+    # =========================================================
+
+    def call(
+        self,
+        method: str,
+        params: dict,
+    ):
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "auth": self.auth,
+            "id": int(time.time() * 1000),
+        }
+
+        response = requests.post(
+            self.api_url,
+            json=payload,
+            timeout=20,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if "error" in data:
+
+            error = data["error"]
+
+            raise RuntimeError(
+                "Zabbix API error: "
+                f"{error.get('message')} - "
+                f"{error.get('data')}"
+            )
+
+        return data["result"]
+
+    # =========================================================
+    # LOGIN
+    # =========================================================
+
+    def login(self):
+
+        self.auth = self.call(
+            "user.login",
+            {
+                "username": self.username,
+                "password": self.password,
+            },
+        )
+
+        return self.auth
+
+    # =========================================================
+    # GROUP
+    # =========================================================
+
+    def get_group_by_name(
+        self,
+        group_name: str,
+    ):
+
+        result = self.call(
+            "hostgroup.get",
+            {
+                "output": [
+                    "groupid",
+                    "name",
+                ],
+                "filter": {
+                    "name": [
+                        group_name
+                    ],
+                },
+            },
+        )
+
+        if not result:
+            return None
+
+        return result[0]
+
+    # =========================================================
+    # ALL GROUPS
+    # =========================================================
+
+    def get_all_groups(self):
+
+        return self.call(
+            "hostgroup.get",
+            {
+                "output": [
+                    "groupid",
+                    "name",
+                ],
+                "sortfield": "name",
+                "sortorder": "ASC",
+            },
+        )
+
+    # =========================================================
+    # HOSTS BY GROUP
+    # =========================================================
+
+    def get_hosts_by_group(
+        self,
+        group_id: str,
+    ):
+
+        return self.call(
+            "host.get",
+            {
+                "output": [
+                    "hostid",
+                    "host",
+                    "name",
+                    "status",
+                    "description",
+                ],
+
+                "groupids": [
+                    group_id
+                ],
+
+                "selectInterfaces": [
+                    "interfaceid",
+                    "ip",
+                    "dns",
+                    "type",
+                    "main",
+                    "port",
+                ],
+
+                "selectGroups": [
+                    "groupid",
+                    "name",
+                ],
+
+                "selectParentTemplates": [
+                    "templateid",
+                    "name",
+                ],
+
+                "sortfield": "name",
+                "sortorder": "ASC",
+            },
+        )
+
+    # =========================================================
+    # HOST BY ID
+    # =========================================================
+
+    def get_host(
+        self,
+        hostid: str,
+    ):
+
+        result = self.call(
+            "host.get",
+            {
+                "output": [
+                    "hostid",
+                    "host",
+                    "name",
+                    "status",
+                    "description",
+                ],
+
+                "hostids": [
+                    hostid
+                ],
+
+                "selectInterfaces": [
+                    "interfaceid",
+                    "ip",
+                    "dns",
+                    "type",
+                    "main",
+                    "port",
+                ],
+
+                "selectGroups": [
+                    "groupid",
+                    "name",
+                ],
+
+                "selectParentTemplates": [
+                    "templateid",
+                    "name",
+                ],
+            },
+        )
+
+        if not result:
+            return None
+
+        return result[0]
+
+    # =========================================================
+    # ITEMS
+    # =========================================================
+
+    def get_items(
+        self,
+        hostid: str,
+    ):
+
+        return self.call(
+            "item.get",
+            {
+                "output": [
+                    "itemid",
+                    "name",
+                    "key_",
+                    "value_type",
+                    "units",
+                    "lastvalue",
+                    "lastclock",
+                    "status",
+                    "state",
+                ],
+
+                "hostids": [
+                    hostid
+                ],
+
+                "filter": {
+                    "status": 0
+                },
+
+                "sortfield": "name",
+                "sortorder": "ASC",
+            },
+        )
+
+    # =========================================================
+    # HISTORY
+    # =========================================================
+
+    def get_history(
+        self,
+        itemid: str,
+        value_type: int,
+        time_from: int,
+        time_till: int | None = None,
+        limit: int = 1000,
+    ):
+
+        params = {
+            "output": "extend",
+            "history": value_type,
+            "itemids": [
+                itemid
+            ],
+            "time_from": time_from,
+            "sortfield": "clock",
+            "sortorder": "ASC",
+            "limit": limit,
+        }
+
+        if time_till is not None:
+            params["time_till"] = time_till
+
+        return self.call(
+            "history.get",
+            params,
+        )
+
+    # =========================================================
+    # TRENDS
+    # =========================================================
+
+    def get_trends(
+        self,
+        itemid: str,
+        value_type: int,
+        time_from: int,
+        time_till: int | None = None,
+        limit: int = 1000,
+    ):
+
+        params = {
+            "output": "extend",
+            "itemids": [
+                itemid
+            ],
+            "time_from": time_from,
+            "sortfield": "clock",
+            "sortorder": "ASC",
+            "limit": limit,
+        }
+
+        if time_till is not None:
+            params["time_till"] = time_till
+
+        return self.call(
+            "trend.get",
+            params,
+        )

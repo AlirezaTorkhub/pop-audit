@@ -1,0 +1,463 @@
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+import paramiko
+from fastapi import FastAPI
+
+
+app = FastAPI(
+    title="POP Audit - Ericsson Service",
+    version="2.0.0",
+)
+
+
+# ============================================================
+# Configuration
+# ============================================================
+
+ENV_FILE = Path("/opt/pop-audit/config/.env")
+
+
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+
+        if (
+            not line
+            or line.startswith("#")
+            or "=" not in line
+        ):
+            continue
+
+        key, value = line.split("=", 1)
+
+        key = key.strip()
+        value = value.strip()
+
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in ("'", '"')
+        ):
+            value = value[1:-1]
+
+        os.environ.setdefault(
+            key,
+            value,
+        )
+
+
+load_env_file(ENV_FILE)
+
+
+MOSHELL_HOST = os.getenv(
+    "MOSHELL_HOST",
+    "",
+)
+
+MOSHELL_USER = os.getenv(
+    "MOSHELL_USER",
+    "",
+)
+
+MOSHELL_PASSWORD = os.getenv(
+    "MOSHELL_PASSWORD",
+    "",
+)
+
+MOSHELL_PATH = os.getenv(
+    "MOSHELL_PATH",
+    "/home/a.torkashvand/Moshell25F/moshell",
+)
+
+SSH_CONNECT_TIMEOUT = int(
+    os.getenv(
+        "SSH_CONNECT_TIMEOUT",
+        "10",
+    )
+)
+
+MOSHELL_SESSION_WAIT = 5
+COMMAND_WAIT = 5
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def read_channel(
+    channel,
+    quiet_window: float = 0.8,
+) -> str:
+
+    data = bytearray()
+
+    while True:
+        if channel.recv_ready():
+            try:
+                chunk = channel.recv(65535)
+            except Exception:
+                break
+
+            if not chunk:
+                break
+
+            data.extend(chunk)
+
+        else:
+            time.sleep(quiet_window)
+
+            if not channel.recv_ready():
+                break
+
+    return data.decode(
+        errors="replace"
+    )
+
+
+def send_moshell_command(
+    channel,
+    command: str,
+    wait_seconds: int = COMMAND_WAIT,
+) -> str:
+
+    print(
+        f"Sending Moshell command: {command}"
+    )
+
+    # Use CR exactly as requested for the
+    # interactive Moshell session.
+    channel.send(
+        command + "\r"
+    )
+
+    time.sleep(
+        wait_seconds
+    )
+
+    return read_channel(
+        channel
+    )
+
+
+# ============================================================
+# Ericsson / Moshell session
+# ============================================================
+
+def run_moshell_session(
+    target_ip: str,
+) -> dict[str, Any]:
+
+    if not MOSHELL_HOST:
+        raise RuntimeError(
+            "MOSHELL_HOST is not configured."
+        )
+
+    if not MOSHELL_USER:
+        raise RuntimeError(
+            "MOSHELL_USER is not configured."
+        )
+
+    if not MOSHELL_PASSWORD:
+        raise RuntimeError(
+            "MOSHELL_PASSWORD is not configured."
+        )
+
+    if not target_ip:
+        raise RuntimeError(
+            "Ericsson target IP is missing."
+        )
+
+    ssh = paramiko.SSHClient()
+
+    ssh.set_missing_host_key_policy(
+        paramiko.AutoAddPolicy()
+    )
+
+    try:
+
+        print(
+            f"Connecting to Moshell server: "
+            f"{MOSHELL_HOST}"
+        )
+
+        ssh.connect(
+            hostname=MOSHELL_HOST,
+            username=MOSHELL_USER,
+            password=MOSHELL_PASSWORD,
+            timeout=SSH_CONNECT_TIMEOUT,
+            banner_timeout=SSH_CONNECT_TIMEOUT,
+            auth_timeout=SSH_CONNECT_TIMEOUT,
+        )
+
+        print(
+            "SSH connection to Moshell server established."
+        )
+
+        channel = ssh.invoke_shell()
+
+        channel.settimeout(
+            1
+        )
+
+        time.sleep(
+            1
+        )
+
+        startup = read_channel(
+            channel
+        )
+
+        # ----------------------------------------------------
+        # Start Moshell session
+        # ----------------------------------------------------
+
+        start_command = (
+            f"cd $(dirname {MOSHELL_PATH}) && "
+            f"./{Path(MOSHELL_PATH).name} "
+            f"{target_ip}"
+        )
+
+        print(
+            f"Starting Moshell session for {target_ip}"
+        )
+
+        channel.send(
+            start_command + "\r"
+        )
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        # Wait 5 seconds after creating the Baseband session
+        # before sending the first command.
+        # ----------------------------------------------------
+
+        time.sleep(
+            MOSHELL_SESSION_WAIT
+        )
+
+        session_output = read_channel(
+            channel
+        )
+
+        outputs: dict[str, str] = {}
+
+        outputs["startup"] = (
+            startup
+            + session_output
+        )
+
+        # ----------------------------------------------------
+        # Required command sequence
+        # ----------------------------------------------------
+
+        outputs["lt all"] = send_moshell_command(
+            channel,
+            "lt all",
+            COMMAND_WAIT,
+        )
+
+        outputs["st cel"] = send_moshell_command(
+            channel,
+            "st cel",
+            COMMAND_WAIT,
+        )
+
+        outputs["alt"] = send_moshell_command(
+            channel,
+            "alt",
+            COMMAND_WAIT,
+        )
+
+        outputs["get . clock"] = send_moshell_command(
+            channel,
+            "get . clock",
+            COMMAND_WAIT,
+        )
+
+        # ----------------------------------------------------
+        # Quit
+        # ----------------------------------------------------
+
+        channel.send(
+            "q\r"
+        )
+
+        time.sleep(
+            2
+        )
+
+        quit_output = read_channel(
+            channel
+        )
+
+        outputs["quit"] = quit_output
+
+        combined = "\n".join(
+            outputs.values()
+        )
+
+        auth_failed = (
+            "Wrong Password or Username"
+            in combined
+        )
+
+        if auth_failed:
+            status = "CRITICAL"
+            message = (
+                "Moshell reached the Ericsson node "
+                "but node authentication failed."
+            )
+        else:
+            status = "PASS"
+            message = (
+                "Moshell session established and "
+                "required commands executed."
+            )
+
+        return {
+            "status": status,
+            "message": message,
+            "target_ip": target_ip,
+            "moshell_host": MOSHELL_HOST,
+            "commands": [
+                "lt all",
+                "st cel",
+                "alt",
+                "get . clock",
+            ],
+            "wait_after_session_seconds": (
+                MOSHELL_SESSION_WAIT
+            ),
+            "wait_between_commands_seconds": (
+                COMMAND_WAIT
+            ),
+            "outputs": outputs,
+        }
+
+    finally:
+
+        try:
+            ssh.close()
+        except Exception:
+            pass
+
+
+# ============================================================
+# API
+# ============================================================
+
+@app.get("/health")
+def health():
+    return {
+        "service": "ericsson",
+        "status": "ok",
+    }
+
+
+@app.post("/check")
+def check(payload: dict):
+
+    basebands = payload.get(
+        "basebands",
+        [],
+    )
+
+    if not isinstance(
+        basebands,
+        list,
+    ):
+        return {
+            "service": "ericsson",
+            "site_code": payload.get(
+                "site_code"
+            ),
+            "status": "UNKNOWN",
+            "results": [],
+            "error": (
+                "basebands must be a list"
+            ),
+        }
+
+    results = []
+
+    for bb in basebands:
+
+        hostname = bb.get(
+            "hostname"
+        )
+
+        ip = bb.get(
+            "ip"
+        )
+
+        hostid = bb.get(
+            "zabbix_hostid"
+        )
+
+        try:
+
+            analysis = run_moshell_session(
+                ip
+            )
+
+            results.append({
+                "hostname": hostname,
+                "ip": ip,
+                "zabbix_hostid": hostid,
+                **analysis,
+            })
+
+        except Exception as exc:
+
+            results.append({
+                "hostname": hostname,
+                "ip": ip,
+                "zabbix_hostid": hostid,
+                "status": "UNKNOWN",
+                "message": (
+                    "Ericsson/Moshell check failed."
+                ),
+                "error": str(exc),
+            })
+
+    priority = {
+        "CRITICAL": 5,
+        "WARNING": 4,
+        "UNKNOWN": 3,
+        "NOT_AVAILABLE": 2,
+        "PASS": 1,
+    }
+
+    if not results:
+        overall_status = "UNKNOWN"
+    else:
+        overall_status = max(
+            (
+                item.get(
+                    "status",
+                    "UNKNOWN",
+                )
+                for item in results
+            ),
+            key=lambda value: priority.get(
+                value,
+                3,
+            ),
+        )
+
+    return {
+        "service": "ericsson",
+        "site_code": payload.get(
+            "site_code"
+        ),
+        "status": overall_status,
+        "results": results,
+    }

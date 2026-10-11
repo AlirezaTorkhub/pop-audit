@@ -1,0 +1,221 @@
+import asyncio
+import os
+import uuid
+from typing import Any
+
+import httpx
+from dotenv import load_dotenv
+
+
+load_dotenv("/opt/pop-audit/config/.env")
+
+
+ZABBIX_SERVICE_URL = os.environ["ZABBIX_SERVICE_URL"]
+CISCO_SERVICE_URL = os.environ["CISCO_SERVICE_URL"]
+ERICSSON_SERVICE_URL = os.environ["ERICSSON_SERVICE_URL"]
+RADIO_SERVICE_URL = os.environ["RADIO_SERVICE_URL"]
+
+
+class AuditRunner:
+
+    def __init__(self):
+        self.jobs: dict[str, dict[str, Any]] = {}
+
+    # ---------------------------------------------------------
+    # JOB MANAGEMENT
+    # ---------------------------------------------------------
+
+    def create_job(self, site_code: str) -> str:
+
+        job_id = str(uuid.uuid4())
+
+        self.jobs[job_id] = {
+            "job_id": job_id,
+            "site_code": site_code,
+            "status": "QUEUED",
+            "discovery": None,
+            "results": {},
+            "error": None,
+        }
+
+        return job_id
+
+    def get_job(self, job_id: str):
+
+        return self.jobs.get(job_id)
+
+    # ---------------------------------------------------------
+    # ZABBIX DISCOVERY
+    # ---------------------------------------------------------
+
+    async def _discover(self, site_code: str):
+
+        async with httpx.AsyncClient(
+            timeout=60
+        ) as client:
+
+            response = await client.post(
+                f"{ZABBIX_SERVICE_URL}/discover",
+                json={
+                    "site_code": site_code
+                },
+            )
+
+            response.raise_for_status()
+
+            return response.json()
+
+    # ---------------------------------------------------------
+    # GENERIC MICROSERVICE CALL
+    # ---------------------------------------------------------
+
+    async def _call_service(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        payload: dict,
+        service_name: str,
+    ):
+
+        try:
+
+            response = await client.post(
+                url,
+                json=payload,
+                timeout=300,
+            )
+
+            if response.is_success:
+
+                return {
+                    "service": service_name,
+                    "status": "COMPLETED",
+                    "data": response.json(),
+                }
+
+            return {
+                "service": service_name,
+                "status": "FAILED",
+                "error": response.text,
+            }
+
+        except Exception as exc:
+
+            return {
+                "service": service_name,
+                "status": "FAILED",
+                "error": str(exc),
+            }
+
+    # ---------------------------------------------------------
+    # RUN COMPLETE AUDIT
+    # ---------------------------------------------------------
+
+    async def run_job(self, job_id: str):
+
+        job = self.jobs[job_id]
+
+        site_code = job["site_code"]
+
+        try:
+
+            # =================================================
+            # PHASE 1 - DISCOVERY
+            # =================================================
+
+            job["status"] = "DISCOVERY"
+
+            discovery = await self._discover(
+                site_code
+            )
+
+            job["discovery"] = discovery
+
+            # =================================================
+            # PHASE 2 - RUN SERVICES CONCURRENTLY
+            # =================================================
+
+            job["status"] = "RUNNING"
+
+            async with httpx.AsyncClient() as client:
+
+                cisco_task = self._call_service(
+                    client,
+                    f"{CISCO_SERVICE_URL}/check",
+                    {
+                        "site_code": site_code,
+                        "devices":
+                            discovery.get(
+                                "devices",
+                                [],
+                            ),
+                    },
+                    "cisco",
+                )
+
+                ericsson_task = self._call_service(
+                    client,
+                    f"{ERICSSON_SERVICE_URL}/check",
+                    {
+                        "site_code": site_code,
+                        "basebands":
+                            discovery.get(
+                                "basebands",
+                                [],
+                            ),
+                    },
+                    "ericsson",
+                )
+
+                radio_task = self._call_service(
+                    client,
+                    f"{RADIO_SERVICE_URL}/analyze",
+                    {
+                        "site_code": site_code,
+                        "radio_links":
+                            discovery.get(
+                                "radio_links",
+                                [],
+                            ),
+                    },
+                    "radio",
+                )
+
+                # -----------------------------------------
+                # IMPORTANT:
+                # These three services execute together.
+                # -----------------------------------------
+
+                results = await asyncio.gather(
+                    cisco_task,
+                    ericsson_task,
+                    radio_task,
+                )
+
+            # =================================================
+            # PHASE 3 - COLLECT RESULTS
+            # =================================================
+
+            for result in results:
+
+                service_name = result[
+                    "service"
+                ]
+
+                job["results"][
+                    service_name
+                ] = result
+
+            # =================================================
+            # COMPLETE
+            # =================================================
+
+            job["status"] = "COMPLETED"
+
+        except Exception as exc:
+
+            job["status"] = "FAILED"
+
+            job["error"] = str(exc)
+
+        return job

@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+
+
+app = FastAPI(
+    title="POP Audit Report Service",
+    version="1.0.0",
+)
+
+
+STATUS_PRIORITY = {
+    "CRITICAL": 5,
+    "WARNING": 4,
+    "UNKNOWN": 3,
+    "NOT_AVAILABLE": 2,
+    "PASS": 1,
+}
+
+
+def aggregate_status(statuses: list[str]) -> str:
+    if not statuses:
+        return "UNKNOWN"
+
+    return max(
+        statuses,
+        key=lambda x: STATUS_PRIORITY.get(x, 3),
+    )
+
+
+def service_status(result: Any) -> str:
+    if not isinstance(result, dict):
+        return "UNKNOWN"
+
+    status = result.get("status")
+
+    if status in STATUS_PRIORITY:
+        return status
+
+    if status == "COMPLETED":
+        data = result.get("data")
+
+        if isinstance(data, dict):
+            data_status = data.get("status")
+
+            if data_status in STATUS_PRIORITY:
+                return data_status
+
+        return "PASS"
+
+    if status == "FAILED":
+        return "CRITICAL"
+
+    return "UNKNOWN"
+
+
+@app.get("/health")
+def health():
+    return {
+        "service": "report",
+        "status": "ok",
+    }
+
+
+@app.post("/generate")
+def generate_report(payload: dict):
+    site_code = str(
+        payload.get("site_code", "")
+    ).strip()
+
+    if not site_code:
+        raise HTTPException(
+            status_code=400,
+            detail="site_code is required",
+        )
+
+    results = payload.get(
+        "results",
+        {},
+    )
+
+    if not isinstance(results, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="results must be an object",
+        )
+
+    statuses = []
+
+    for service_name, result in results.items():
+        status = service_status(result)
+        statuses.append(status)
+
+    overall_status = aggregate_status(
+        statuses
+    )
+
+    services = {}
+
+    for service_name, result in results.items():
+
+        services[service_name] = {
+            "status": service_status(result),
+            "raw": result,
+        }
+
+    return {
+        "site_code": site_code,
+        "status": overall_status,
+        "services": services,
+        "summary": {
+            "service_count": len(services),
+            "critical": sum(
+                1
+                for x in statuses
+                if x == "CRITICAL"
+            ),
+            "warning": sum(
+                1
+                for x in statuses
+                if x == "WARNING"
+            ),
+            "unknown": sum(
+                1
+                for x in statuses
+                if x == "UNKNOWN"
+            ),
+            "not_available": sum(
+                1
+                for x in statuses
+                if x == "NOT_AVAILABLE"
+            ),
+            "pass": sum(
+                1
+                for x in statuses
+                if x == "PASS"
+            ),
+        },
+    }

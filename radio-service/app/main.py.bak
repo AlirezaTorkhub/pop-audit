@@ -1,0 +1,187 @@
+import os
+from typing import Any
+
+import requests
+from fastapi import FastAPI, HTTPException
+
+from .eband import analyze_eband
+
+
+app = FastAPI(
+    title="POP Audit - Radio Service",
+    version="1.0.0",
+)
+
+
+ZABBIX_SERVICE_URL = os.getenv(
+    "ZABBIX_SERVICE_URL",
+    "http://127.0.0.1:8002",
+).rstrip("/")
+
+
+def get_zabbix_host_items(hostid: str) -> dict[str, Any]:
+    url = (
+        f"{ZABBIX_SERVICE_URL}"
+        f"/host/{hostid}/items"
+    )
+
+    response = requests.get(
+        url,
+        timeout=30,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def build_item_map(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        item["key_"]: item
+        for item in items
+    }
+
+
+def get_item_value(
+    item_map: dict[str, dict[str, Any]],
+    key: str,
+):
+    item = item_map.get(key)
+
+    if not item:
+        return None
+
+    return item
+
+
+def analyze_eband_host(
+    hostid: str,
+) -> dict[str, Any]:
+
+    data = get_zabbix_host_items(
+        hostid
+    )
+
+    items = data.get(
+        "items",
+        [],
+    )
+
+    item_map = build_item_map(
+        items
+    )
+
+    result = analyze_eband(
+        hostid=hostid,
+        hostname=data["host"]["name"],
+        items=item_map,
+    )
+
+    return result
+
+@app.get("/health")
+def health():
+    return {
+        "service": "radio-service",
+        "status": "ok",
+    }
+
+
+@app.post("/analyze")
+def analyze(payload: dict):
+
+    site_code = payload.get(
+        "site_code"
+    )
+
+    links = payload.get(
+        "radio_links",
+        [],
+    )
+
+    results = []
+
+    for link in links:
+
+        hostid = str(
+            link.get("hostid")
+        )
+
+        link_type = (
+            link.get("link_type")
+            or ""
+        ).lower()
+
+        try:
+
+            if link_type == "eband":
+
+                result = analyze_eband_host(
+                    hostid
+                )
+
+                result["name"] = link.get(
+                    "name"
+                )
+
+                result["link_type"] = (
+                    link.get("link_type")
+                )
+
+                results.append(
+                    result
+                )
+
+            else:
+
+                results.append({
+                    "hostid": hostid,
+                    "name": link.get("name"),
+                    "link_type": link.get(
+                        "link_type"
+                    ),
+                    "technology": link_type.upper(),
+                    "status": "NOT_AVAILABLE",
+                    "message": (
+                        "Analyzer for this "
+                        "radio technology "
+                        "is not implemented yet."
+                    ),
+                })
+
+        except requests.RequestException as exc:
+
+            results.append({
+                "hostid": hostid,
+                "name": link.get("name"),
+                "link_type": link.get(
+                    "link_type"
+                ),
+                "status": "UNKNOWN",
+                "message": (
+                    "Unable to retrieve "
+                    "metrics from zabbix-service."
+                ),
+                "error": str(exc),
+            })
+
+        except Exception as exc:
+
+            results.append({
+                "hostid": hostid,
+                "name": link.get("name"),
+                "link_type": link.get(
+                    "link_type"
+                ),
+                "status": "UNKNOWN",
+                "message": (
+                    "Radio analysis failed."
+                ),
+                "error": str(exc),
+            })
+
+    return {
+        "service": "radio",
+        "site_code": site_code,
+        "results": results,
+    }

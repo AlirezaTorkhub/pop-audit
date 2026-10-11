@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+
+app = FastAPI(
+    title="POP Audit - Cisco Service",
+    version="1.0.0",
+)
+
+
+@app.get("/health")
+def health():
+    return {
+        "service": "cisco",
+        "status": "ok",
+    }
+
+
+@app.post("/check")
+def check(payload: dict):
+
+    devices = payload.get(
+        "devices",
+        [],
+    )
+
+    results = []
+
+    for device in devices:
+
+        results.append({
+            "hostname": device.get("hostname"),
+            "ip": device.get("ip"),
+            "zabbix_hostid": device.get("zabbix_hostid"),
+            "status": "NOT_AVAILABLE",
+            "message": (
+                "Cisco check engine is not implemented yet."
+            ),
+        })
+
+    return {
+        "service": "cisco",
+        "site_code": payload.get("site_code"),
+        "status": "NOT_AVAILABLE",
+        "results": results,
+    }
