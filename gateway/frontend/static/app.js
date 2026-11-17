@@ -444,15 +444,16 @@ function renderCisco(wrapper) {
         const recentLogs = Array.isArray(logging.recent_10)
             ? logging.recent_10
             : [];
+        const loggingCommand = logging.command || "show logging";
         const loggingCommandStatus =
-            device.raw_commands?.["show logging"]?.status || "UNKNOWN";
+            device.raw_commands?.[loggingCommand]?.status || "UNKNOWN";
 
         html += `
             <div class="table-wrap" style="margin-top:16px">
                 <div class="detail-header">
                     <div>
                         <h4>Latest 10 Cisco Logs</h4>
-                        <span>Newest first · ${recentLogs.length} parsed events</span>
+                        <span>${escapeHtml(loggingCommand)} · Newest first · ${recentLogs.length} parsed events</span>
                     </div>
                     <span class="small-status">${escapeHtml(loggingCommandStatus)}</span>
                 </div>
