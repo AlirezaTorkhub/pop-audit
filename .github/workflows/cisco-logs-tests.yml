@@ -1,0 +1,45 @@
+name: Cisco Recent Logs Tests
+
+on:
+  pull_request:
+    paths:
+      - "cisco-service/**"
+      - "report-service/**"
+      - "gateway/frontend/static/app.js"
+      - ".github/workflows/cisco-logs-tests.yml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  cisco-and-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install fastapi==0.141.1 netmiko==4.7.0 openpyxl==3.1.5
+
+      - name: Test Cisco syslog parser
+        run: python -m unittest discover -s cisco-service/tests -v
+
+      - name: Test Cisco Excel log worksheet
+        run: python -m unittest discover -s report-service/tests -v
+
+      - name: Check dashboard JavaScript syntax
+        run: node --check gateway/frontend/static/app.js
