@@ -9,12 +9,24 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHON_DOTENV_DISABLED: "true"
-      ORCHESTRATOR_URL: "http://orchestrator:8001"
+      POP_AUDIT_DB_PATH: "/opt/pop-audit/data/jobs.sqlite3"
+      ZABBIX_SERVICE_URL: "http://zabbix-service:8002"
+      CISCO_SERVICE_URL: "http://cisco-service:8003"
+      ERICSSON_SERVICE_URL: "http://ericsson-service:8004"
+      RADIO_SERVICE_URL: "http://radio-service:8005"
       REPORT_SERVICE_URL: "http://report-service:8006"
     ports:
       - "${POP_AUDIT_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./data:/opt/pop-audit/data
     depends_on:
-      orchestrator:
+      zabbix-service:
+        condition: service_healthy
+      cisco-service:
+        condition: service_healthy
+      ericsson-service:
+        condition: service_healthy
+      radio-service:
         condition: service_healthy
       report-service:
         condition: service_healthy
@@ -35,21 +47,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  orchestrator:
-    build:
-      context: ./orchestrator
-    restart: unless-stopped
-    init: true
-    environment:
-      PYTHONUNBUFFERED: "1"
-      PYTHON_DOTENV_DISABLED: "true"
-      ZABBIX_SERVICE_URL: "http://zabbix-service:8002"
-      CISCO_SERVICE_URL: "http://cisco-service:8003"
-      ERICSSON_SERVICE_URL: "http://ericsson-service:8004"
-      RADIO_SERVICE_URL: "http://radio-service:8005"
-      REPORT_SERVICE_URL: "http://report-service:8006"
-    depends_on:
-      zabbix-service:
+  zabbix-service:
         condition: service_healthy
       cisco-service:
         condition: service_healthy
@@ -210,7 +208,7 @@ services:
       PYTHON_DOTENV_DISABLED: "true"
       REPORT_DIR: "/opt/pop-audit/reports"
     volumes:
-      - /opt/pop-audit/reports:/opt/pop-audit/reports
+      - ./reports:/opt/pop-audit/reports
     healthcheck:
       test:
         - CMD
