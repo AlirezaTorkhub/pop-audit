@@ -693,8 +693,6 @@ def parse_logging(output: str) -> dict[str, Any]:
         if line.strip()
     ]
 
-    recent = lines[-20:]
-
     severity_counts = {
         "EMERGENCY": 0,
         "ALERT": 0,
@@ -717,22 +715,50 @@ def parse_logging(output: str) -> dict[str, Any]:
         7: "DEBUG",
     }
 
-    for line in lines:
+    syslog_pattern = re.compile(
+        r"%(?P<facility>[A-Z0-9_-]+)-"
+        r"(?P<severity>[0-7])-"
+        r"(?P<mnemonic>[A-Z0-9_-]+):\\s*"
+        r"(?P<message>.*)",
+        re.IGNORECASE,
+    )
 
-        match = re.search(
-            r"%[A-Z0-9_-]+-(\d+)-",
-            line,
-        )
+    timestamp_pattern = re.compile(
+        r"\\*?[A-Z][a-z]{2}\\s+\\d{1,2}\\s+"
+        r"\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?"
+        r"(?:\\s+[A-Z]{2,5})?"
+    )
+
+    entries: list[dict[str, Any]] = []
+
+    for line in lines:
+        match = syslog_pattern.search(line)
 
         if not match:
             continue
 
-        level = int(match.group(1))
+        level = int(match.group("severity"))
+        severity = severity_patterns[level]
+        prefix = line[:match.start()].strip()
 
-        severity = severity_patterns.get(level)
+        timestamp_match = timestamp_pattern.search(prefix)
+        timestamp = (
+            timestamp_match.group(0)
+            if timestamp_match
+            else (prefix.rstrip(":").strip() or None)
+        )
 
-        if severity:
-            severity_counts[severity] += 1
+        entry = {
+            "timestamp": timestamp,
+            "severity": severity,
+            "level": level,
+            "facility": match.group("facility"),
+            "mnemonic": match.group("mnemonic"),
+            "message": match.group("message").strip(),
+            "raw": line,
+        }
+        entries.append(entry)
+        severity_counts[severity] += 1
 
     critical_count = (
         severity_counts["EMERGENCY"]
@@ -750,12 +776,16 @@ def parse_logging(output: str) -> dict[str, Any]:
     else:
         status = "PASS"
 
+    # Cisco "show logging" output is retained in device order; the
+    # final ten parsed events are returned newest first for presentation.
+    recent_10 = list(reversed(entries[-10:]))
+
     return {
         "status": status,
         "severity_counts": severity_counts,
-        "recent_20": recent,
+        "recent_20": lines[-20:],
+        "recent_10": recent_10,
     }
-
 
 # ============================================================
 # Environment
