@@ -56,15 +56,15 @@ def evaluate_difference(
             reason="Difference value is not available.",
         )
 
-    if value <= threshold:
+    if value < threshold:
         return base_result(
             status="PASS",
             value=value,
             threshold=threshold,
-            operator="<=",
+            operator="<",
             reason=(
                 f"Difference {value:.2f} dB "
-                f"is within the verified threshold."
+                f"is below the verified threshold."
             ),
         )
 
@@ -72,12 +72,12 @@ def evaluate_difference(
         status="CRITICAL",
         value=value,
         threshold=threshold,
-        operator="<=",
-        trigger_description="Calloff above 7dbm",
+        operator="<",
+        trigger_description="Calloff at or above 7 dB",
         zabbix_priority=4,
         reason=(
             f"Difference {value:.2f} dB "
-            f"exceeds the verified 7 dB threshold."
+            f"is at or above the verified 7 dB threshold."
         ),
     )
 
