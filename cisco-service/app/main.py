@@ -852,6 +852,18 @@ def parse_environment(
 # Complete device audit
 # ============================================================
 
+def logging_command_for_device(device: dict[str, Any]) -> str:
+    """Return a bounded log command for NCS and the default for other Cisco devices."""
+    device_type = str(
+        device.get("device_type") or ""
+    ).strip().lower()
+
+    if device_type == "ncs":
+        return "show logging last 10"
+
+    return "show logging"
+
+
 COMMANDS = [
     "show version",
     "show inventory",
@@ -913,7 +925,13 @@ def audit_device(
         except Exception:
             pass
 
-        for command in COMMANDS:
+        logging_command = logging_command_for_device(device)
+        device_commands = [
+            logging_command if command == "show logging" else command
+            for command in COMMANDS
+        ]
+
+        for command in device_commands:
             command_outputs[command] = run_command(
                 connection,
                 command,
@@ -952,7 +970,7 @@ def audit_device(
 
         logging_output = (
             command_outputs.get(
-                "show logging",
+                logging_command,
                 {},
             ).get("output", "")
         )
@@ -1087,6 +1105,7 @@ def audit_device(
         logging_data = parse_logging(
             logging_output
         )
+        logging_data["command"] = logging_command
 
         environment = parse_environment(
             command_outputs
