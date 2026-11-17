@@ -11,3 +11,10 @@ __pycache__/
 .venv/
 venv/
 venvs/
+
+# Generated audit reports (contain operational site data)
+reports/
+
+# Local backup snapshots
+*.bak
+*.bak.*
