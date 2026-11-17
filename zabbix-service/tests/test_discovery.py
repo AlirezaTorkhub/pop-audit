@@ -252,6 +252,29 @@ class DiscoveryRuleTests(unittest.TestCase):
             [item.zabbix_hostid for item in result.radio_links],
         )
 
+        # Multiple active NCS candidates for the same location are ambiguous:
+        # discovery must warn and must not silently select either candidate.
+        discovery.client.hosts_by_group["aggregation"].append(
+            make_host(
+                "ncs-active-duplicate",
+                "TH-BH-NCS-SiteAlpha-SecondAgg",
+                0,
+                "10.0.0.13",
+                ["LTE-Backhaul-Switch-Aggregation"],
+                ["FDI Cisco SW", "Template Temperature NCS"],
+                {"location": "SiteAlpha"},
+            )
+        )
+        ambiguous_result = discovery.discover("1234")
+        self.assertEqual(
+            ["switch-active"],
+            [item.zabbix_hostid for item in ambiguous_result.devices],
+        )
+        self.assertTrue(
+            any("Multiple active NCS candidates" in warning
+                for warning in ambiguous_result.warnings)
+        )
+
 
 
 
