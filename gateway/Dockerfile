@@ -10,7 +10,7 @@ WORKDIR /app
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-RUN mkdir -p /opt/pop-audit/config /opt/pop-audit/reports \
+RUN mkdir -p /opt/pop-audit/config /opt/pop-audit/reports /opt/pop-audit/data \
     && touch /opt/pop-audit/config/.env
 
 COPY app ./app

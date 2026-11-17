@@ -1,0 +1,36 @@
+name: Modular Backend Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "gateway/**"
+      - "compose.yaml"
+      - ".github/workflows/modular-backend-tests.yml"
+  push:
+    branches: [refactor/modular-backend]
+
+jobs:
+  gateway-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: gateway/requirements.txt
+      - name: Install Gateway dependencies
+        run: python -m pip install -r gateway/requirements.txt
+      - name: Validate Python syntax
+        run: python -m compileall -q gateway/app
+      - name: Run persistence and status tests
+        working-directory: gateway
+        env:
+          POP_AUDIT_DB_PATH: ${{ runner.temp }}/pop-audit-jobs.sqlite3
+          ZABBIX_SERVICE_URL: http://127.0.0.1:8002
+          CISCO_SERVICE_URL: http://127.0.0.1:8003
+          ERICSSON_SERVICE_URL: http://127.0.0.1:8004
+          RADIO_SERVICE_URL: http://127.0.0.1:8005
+          REPORT_SERVICE_URL: http://127.0.0.1:8006
+        run: python -m unittest discover -s tests -v
