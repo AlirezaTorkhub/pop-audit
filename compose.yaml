@@ -9,45 +9,16 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHON_DOTENV_DISABLED: "true"
-      ORCHESTRATOR_URL: "http://orchestrator:8001"
-      REPORT_SERVICE_URL: "http://report-service:8006"
-    ports:
-      - "${POP_AUDIT_HOST_PORT:-8000}:8000"
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-      report-service:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8000)) == 0 else 1)"
-      interval: 10s
-      timeout: 4s
-      retries: 6
-      start_period: 10s
-    networks:
-      - pop-audit-internal
-    logging:
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  orchestrator:
-    build:
-      context: ./orchestrator
-    restart: unless-stopped
-    init: true
-    environment:
-      PYTHONUNBUFFERED: "1"
-      PYTHON_DOTENV_DISABLED: "true"
+      POP_AUDIT_DB_PATH: "/opt/pop-audit/data/jobs.sqlite3"
       ZABBIX_SERVICE_URL: "http://zabbix-service:8002"
       CISCO_SERVICE_URL: "http://cisco-service:8003"
       ERICSSON_SERVICE_URL: "http://ericsson-service:8004"
       RADIO_SERVICE_URL: "http://radio-service:8005"
       REPORT_SERVICE_URL: "http://report-service:8006"
+    ports:
+      - "${POP_AUDIT_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./data:/opt/pop-audit/data
     depends_on:
       zabbix-service:
         condition: service_healthy
@@ -64,7 +35,7 @@ services:
         - CMD
         - python
         - -c
-        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8001)) == 0 else 1)"
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8000)) == 0 else 1)"
       interval: 10s
       timeout: 4s
       retries: 6
@@ -210,7 +181,7 @@ services:
       PYTHON_DOTENV_DISABLED: "true"
       REPORT_DIR: "/opt/pop-audit/reports"
     volumes:
-      - /opt/pop-audit/reports:/opt/pop-audit/reports
+      - ./reports:/opt/pop-audit/reports
     healthcheck:
       test:
         - CMD
