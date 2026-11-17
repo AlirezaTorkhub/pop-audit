@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,8 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .runner import AuditRunner
+
 
 app = FastAPI(
     title="POP Audit Gateway",
@@ -17,15 +20,13 @@ app = FastAPI(
 )
 
 
-ORCHESTRATOR_URL = os.getenv(
-    "ORCHESTRATOR_URL",
-    "http://127.0.0.1:8001",
-)
+ZABBIX_SERVICE_URL = os.getenv("ZABBIX_SERVICE_URL", "http://127.0.0.1:8002")
+CISCO_SERVICE_URL = os.getenv("CISCO_SERVICE_URL", "http://127.0.0.1:8003")
+ERICSSON_SERVICE_URL = os.getenv("ERICSSON_SERVICE_URL", "http://127.0.0.1:8004")
+RADIO_SERVICE_URL = os.getenv("RADIO_SERVICE_URL", "http://127.0.0.1:8005")
+REPORT_SERVICE_URL = os.getenv("REPORT_SERVICE_URL", "http://127.0.0.1:8006")
 
-REPORT_SERVICE_URL = os.getenv(
-    "REPORT_SERVICE_URL",
-    "http://127.0.0.1:8006",
-)
+runner = AuditRunner()
 
 FRONTEND_DIR = Path(
     "/opt/pop-audit/gateway/frontend"
@@ -70,39 +71,11 @@ def post_json(
     return response.json()
 
 
-def get_audit_from_orchestrator(
-    job_id: str,
-) -> dict[str, Any]:
-
-    try:
-
-        return get_json(
-            f"{ORCHESTRATOR_URL}/audit/{job_id}"
-        )
-
-    except requests.HTTPError as exc:
-
-        status_code = (
-            exc.response.status_code
-            if exc.response is not None
-            else 502
-        )
-
-        raise HTTPException(
-            status_code=status_code,
-            detail=(
-                exc.response.text
-                if exc.response is not None
-                else str(exc)
-            ),
-        )
-
-    except requests.RequestException as exc:
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"Orchestrator unavailable: {exc}",
-        )
+def get_audit_from_runner(job_id: str) -> dict[str, Any]:
+    audit = runner.get_job(job_id)
+    if audit is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return audit
 
 
 def ensure_report(
@@ -210,14 +183,11 @@ def health():
     services = {}
 
     for name, url in [
-        (
-            "orchestrator",
-            ORCHESTRATOR_URL,
-        ),
-        (
-            "report",
-            REPORT_SERVICE_URL,
-        ),
+        ("zabbix", ZABBIX_SERVICE_URL),
+        ("cisco", CISCO_SERVICE_URL),
+        ("ericsson", ERICSSON_SERVICE_URL),
+        ("radio", RADIO_SERVICE_URL),
+        ("report", REPORT_SERVICE_URL),
     ]:
 
         try:
@@ -256,34 +226,19 @@ def health():
 # ============================================================
 
 @app.post("/audit")
-def create_audit(
-    request: AuditRequest,
-):
-
+async def create_audit(request: AuditRequest):
     site_code = request.site_code.strip()
-
     if not site_code:
+        raise HTTPException(status_code=400, detail="Site code is required.")
 
-        raise HTTPException(
-            status_code=400,
-            detail="Site code is required.",
-        )
+    job_id = runner.create_job(site_code)
+    asyncio.create_task(runner.run_job(job_id))
 
-    try:
-
-        return post_json(
-            f"{ORCHESTRATOR_URL}/audit",
-            {
-                "site_code": site_code,
-            },
-        )
-
-    except requests.RequestException as exc:
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"Orchestrator unavailable: {exc}",
-        )
+    return {
+        "job_id": job_id,
+        "site_code": site_code,
+        "status": "QUEUED",
+    }
 
 
 @app.get("/audit/{job_id}/report/download")
@@ -291,7 +246,7 @@ def download_report(
     job_id: str,
 ):
 
-    audit = get_audit_from_orchestrator(
+    audit = get_audit_from_runner(
         job_id
     )
 
@@ -366,7 +321,7 @@ def get_report(
     job_id: str,
 ):
 
-    audit = get_audit_from_orchestrator(
+    audit = get_audit_from_runner(
         job_id
     )
 
@@ -394,6 +349,6 @@ def get_audit(
     job_id: str,
 ):
 
-    return get_audit_from_orchestrator(
+    return get_audit_from_runner(
         job_id
     )
