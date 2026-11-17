@@ -39,7 +39,7 @@ class CiscoLogsWorksheetTests(unittest.TestCase):
                     "zabbix_hostid": "10001",
                     "status": "PASS",
                     "checks": {
-                        "logging": {"status": "PASS", "recent_10": [event_a]},
+                        "logging": {"status": "PASS", "command": "show logging", "recent_10": [event_a]},
                     },
                     "raw_commands": {"show logging": {"status": "PASS"}},
                 },
@@ -49,9 +49,9 @@ class CiscoLogsWorksheetTests(unittest.TestCase):
                     "zabbix_hostid": "10002",
                     "status": "WARNING",
                     "checks": {
-                        "logging": {"status": "PASS", "recent_10": [event_b]},
+                        "logging": {"status": "PASS", "command": "show logging last 10", "recent_10": [event_b]},
                     },
-                    "raw_commands": {"show logging": {"status": "PASS"}},
+                    "raw_commands": {"show logging last 10": {"status": "PASS"}},
                 },
             ]
         }
@@ -68,6 +68,9 @@ class CiscoLogsWorksheetTests(unittest.TestCase):
         self.assertEqual(rows[0][1], rows[1][1])
         self.assertEqual(rows[0][8], "synthetic event alpha")
         self.assertEqual(rows[1][8], "synthetic event beta")
+        self.assertEqual(rows[0][3], "show logging")
+        self.assertEqual(rows[1][3], "show logging last 10")
+        self.assertEqual(rows[1][10], "PASS")
 
 
 if __name__ == "__main__":
