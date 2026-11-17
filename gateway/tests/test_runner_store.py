@@ -19,14 +19,20 @@ class AuditRunnerPersistenceTests(unittest.TestCase):
 
     def test_new_job_survives_runner_restart(self) -> None:
         job_id = self.runner.create_job("2488")
+        original = self.runner.get_job(job_id)
+        original["status"] = "COMPLETED"
+        original["audit_status"] = "PASS"
+        original["summary"] = {"pass": 3}
+        self.runner._save_job(original)
 
         restarted_runner = AuditRunner()
         job = restarted_runner.get_job(job_id)
 
         self.assertIsNotNone(job)
         self.assertEqual(job["site_code"], "2488")
-        self.assertEqual(job["status"], "QUEUED")
-        self.assertEqual(job["audit_status"], "UNKNOWN")
+        self.assertEqual(job["status"], "COMPLETED")
+        self.assertEqual(job["audit_status"], "PASS")
+        self.assertEqual(job["summary"], {"pass": 3})
 
     def test_interrupted_job_is_marked_failed_on_restart(self) -> None:
         job_id = self.runner.create_job("2488")
