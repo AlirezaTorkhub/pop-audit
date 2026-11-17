@@ -255,11 +255,14 @@ def infer_radio_type(
     if "rtn" in value:
         return "RTN"
 
-    if "intracome" in value:
-        return "Intracome"
+    # Match canonical names and legacy/plural spelling variants.
+    # Keep the returned values aligned with the public API contract:
+    # NRay and Intracom.
+    if "intracom" in value:
+        return "Intracom"
 
-    if "nrays" in value:
-        return "NRays"
+    if "nray" in value:
+        return "NRay"
 
     # Current real-world naming example:
     #
