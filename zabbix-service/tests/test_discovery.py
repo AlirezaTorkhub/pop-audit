@@ -1,6 +1,14 @@
+import os
 import unittest
+from unittest.mock import patch
 
-from app.discovery import infer_radio_type, parse_direction
+from app.discovery import (
+    SiteDiscovery,
+    infer_radio_type,
+    is_host_enabled,
+    matches_baseband_site_code,
+    parse_direction,
+)
 
 
 class InferRadioTypeTests(unittest.TestCase):
@@ -63,6 +71,188 @@ class InferRadioTypeTests(unittest.TestCase):
         self.assertEqual(outgoing[0], "1234")
         self.assertEqual(outgoing[1], "950")
         self.assertIsNone(incoming[0])
+
+
+
+class DiscoveryRuleTests(unittest.TestCase):
+    def test_disabled_and_unknown_status_hosts_are_excluded(self):
+        self.assertTrue(is_host_enabled({"status": "0"}))
+        self.assertTrue(is_host_enabled({"status": 0}))
+        self.assertFalse(is_host_enabled({"status": "1"}))
+        self.assertFalse(is_host_enabled({"status": 1}))
+        self.assertFalse(is_host_enabled({}))
+
+    def test_secondary_baseband_uses_same_last_three_digits(self):
+        self.assertTrue(matches_baseband_site_code("SiteAlpha-1234-eNodeB", "1234"))
+        self.assertTrue(matches_baseband_site_code("SiteAlpha-7234-eNodeB", "1234"))
+        self.assertFalse(matches_baseband_site_code("SiteAlpha-2235-eNodeB", "1234"))
+        self.assertFalse(matches_baseband_site_code("SiteAlpha-12345-eNodeB", "1234"))
+        self.assertFalse(matches_baseband_site_code("SiteAlpha-234-eNodeB", "1234"))
+
+    def test_discovery_filters_disabled_hosts_and_keeps_distinct_ncs(self):
+        def make_host(hostid, name, status, ip, groups=None, templates=None, inventory=None):
+            return {
+                "hostid": str(hostid),
+                "host": name,
+                "name": name,
+                "status": str(status),
+                "description": "",
+                "interfaces": [
+                    {
+                        "interfaceid": str(hostid),
+                        "ip": ip,
+                        "dns": "",
+                        "type": "1",
+                        "main": "1",
+                        "port": "10050",
+                    }
+                ],
+                "groups": [{"name": value} for value in (groups or [])],
+                "parentTemplates": [
+                    {"name": value} for value in (templates or [])
+                ],
+                "inventory": inventory or {},
+            }
+
+        basebands = [
+            make_host("bb-primary", "SiteAlpha-1234-eNodeB", 0, "10.0.0.1"),
+            make_host("bb-secondary", "SiteAlpha-7234-eNodeB", 0, "10.0.0.2"),
+            make_host("bb-disabled", "SiteAlpha-6234-eNodeB", 1, "10.0.0.3"),
+        ]
+        switches = [
+            make_host(
+                "switch-disabled",
+                "TH-BH-SW-1234-SiteAlpha",
+                1,
+                "10.0.0.10",
+                ["LTE-Backhaul-Switch"],
+                ["FDI Cisco SW"],
+                {"location": "SiteAlpha"},
+            ),
+            make_host(
+                "switch-active",
+                "TH-BH-SW-1234-SiteAlpha-II",
+                0,
+                "10.0.0.10",
+                ["LTE-Backhaul-Switch"],
+                ["FDI Cisco SW"],
+                {"location": "SiteAlpha"},
+            ),
+        ]
+        aggregation = [
+            make_host(
+                "ncs-active",
+                "TH-BH-NCS-SiteAlpha-Agg",
+                0,
+                "10.0.0.10",
+                ["Backbone", "LTE-Backhaul-Switch-Aggregation", "ptp"],
+                ["FDI Cisco SW", "Cisco-PTP-Only", "Template Temperature NCS"],
+                {"location": "SiteAlpha"},
+            ),
+            make_host(
+                "ncs-disabled",
+                "TH-BH-NCS-SiteAlpha-Old",
+                1,
+                "10.0.0.11",
+                ["LTE-Backhaul-Switch-Aggregation"],
+                ["FDI Cisco SW", "Template Temperature NCS"],
+                {"location": "SiteAlpha"},
+            ),
+            make_host(
+                "ncs-other-site",
+                "TH-BH-NCS-SiteBeta-Agg",
+                0,
+                "10.0.0.12",
+                ["LTE-Backhaul-Switch-Aggregation"],
+                ["FDI Cisco SW", "Template Temperature NCS"],
+                {"location": "SiteBeta"},
+            ),
+        ]
+        radios = [
+            make_host(
+                "radio-active",
+                "SiteAlpha-1234-To-NodeBeta-EBand",
+                0,
+                "10.0.0.20",
+            ),
+            make_host(
+                "radio-disabled",
+                "SiteAlpha-1234-To-NodeGamma-RTN",
+                1,
+                "10.0.0.21",
+            ),
+            make_host(
+                "radio-incoming",
+                "NodeDelta-2200-To-SiteAlpha-1234-EBand",
+                0,
+                "10.0.0.22",
+            ),
+        ]
+
+        class FakeZabbixClient:
+            groups = {
+                "LTE-Backhaul-eNodeB": {"groupid": "baseband"},
+                "LTE-Backhaul-Switch": {"groupid": "switch"},
+                "LTE-Backhaul-Radio": {"groupid": "radio"},
+                "LTE-Backhaul-Switch-Aggregation": {"groupid": "aggregation"},
+            }
+            hosts_by_group = {
+                "baseband": basebands,
+                "switch": switches,
+                "radio": radios,
+                "aggregation": aggregation,
+            }
+
+            def login(self):
+                return "authenticated"
+
+            def get_group_by_name(self, group_name):
+                return self.groups.get(group_name)
+
+            def get_hosts_by_group(self, group_id):
+                return self.hosts_by_group.get(group_id, [])
+
+        environment = {
+            "ZABBIX_URL": "https://zabbix.example.invalid",
+            "ZABBIX_USER": "test-user",
+            "ZABBIX_PASSWORD": "test-password",
+            "ZABBIX_GROUP_ENODEB": "LTE-Backhaul-eNodeB",
+            "ZABBIX_GROUP_SWITCH": "LTE-Backhaul-Switch",
+            "ZABBIX_GROUP_RADIO": "LTE-Backhaul-Radio",
+            "ZABBIX_GROUP_SWITCH_AGGREGATION": "LTE-Backhaul-Switch-Aggregation",
+        }
+
+        with patch.dict(os.environ, environment):
+            discovery = SiteDiscovery()
+
+        discovery.client = FakeZabbixClient()
+        result = discovery.discover("1234")
+
+        self.assertEqual(
+            {"bb-primary", "bb-secondary"},
+            {item.zabbix_hostid for item in result.basebands},
+        )
+        self.assertEqual(
+            {"switch-active", "ncs-active"},
+            {item.zabbix_hostid for item in result.devices},
+        )
+
+        devices = {item.zabbix_hostid: item for item in result.devices}
+        self.assertEqual("network", devices["switch-active"].role)
+        self.assertEqual("ncs", devices["ncs-active"].role)
+        self.assertEqual("ncs", devices["ncs-active"].device_type)
+        # Same management IP does not make two different Zabbix hosts identical.
+        self.assertEqual(
+            devices["switch-active"].ip,
+            devices["ncs-active"].ip,
+        )
+
+        self.assertEqual(
+            ["radio-active"],
+            [item.zabbix_hostid for item in result.radio_links],
+        )
+
+
 
 
 if __name__ == "__main__":
