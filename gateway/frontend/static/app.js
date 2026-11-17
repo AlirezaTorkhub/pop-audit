@@ -373,6 +373,13 @@ function renderCisco(wrapper) {
                 </div>
 
                 <div class="metric">
+                    <div class="metric-label">Zabbix Host ID</div>
+                    <div class="metric-value">
+                        ${escapeHtml(device.zabbix_hostid || "-")}
+                    </div>
+                </div>
+
+                <div class="metric">
                     <div class="metric-label">Overall</div>
                     <div class="metric-value">
                         ${statusSpan(device.status)}
@@ -425,12 +432,70 @@ function renderCisco(wrapper) {
                 `;
             }
 
+
             html += `
                         </tbody>
                     </table>
                 </div>
             `;
         }
+
+        const logging = checks.logging || {};
+        const recentLogs = Array.isArray(logging.recent_10)
+            ? logging.recent_10
+            : [];
+        const loggingCommandStatus =
+            device.raw_commands?.["show logging"]?.status || "UNKNOWN";
+
+        html += `
+            <div class="table-wrap" style="margin-top:16px">
+                <div class="detail-header">
+                    <div>
+                        <h4>Latest 10 Cisco Logs</h4>
+                        <span>Newest first · ${recentLogs.length} parsed events</span>
+                    </div>
+                    <span class="small-status">${escapeHtml(loggingCommandStatus)}</span>
+                </div>
+        `;
+
+        if (recentLogs.length) {
+            html += `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Severity</th>
+                            <th>Facility</th>
+                            <th>Event</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const log of recentLogs) {
+                html += `
+                    <tr>
+                        <td>${escapeHtml(log.timestamp || "-")}</td>
+                        <td>${escapeHtml(log.severity || "-")}</td>
+                        <td>${escapeHtml(log.facility || "-")}</td>
+                        <td>${escapeHtml(
+                            [log.mnemonic, log.message].filter(Boolean).join(": ")
+                        )}</td>
+                    </tr>
+                `;
+            }
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+        } else {
+            html += `
+                <div class="empty-state">No parsed Syslog events returned by show logging.</div>
+            `;
+        }
+
+        html += `</div>`;
     }
 
     container.innerHTML = html;
