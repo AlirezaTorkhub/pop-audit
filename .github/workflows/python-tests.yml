@@ -1,0 +1,31 @@
+name: Python unit tests
+
+on:
+  pull_request:
+    paths:
+      - "zabbix-service/**"
+      - ".github/workflows/python-tests.yml"
+  push:
+    branches:
+      - main
+
+jobs:
+  zabbix-discovery:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: zabbix-service/requirements.txt
+
+      - name: Install service dependencies
+        run: python -m pip install -r zabbix-service/requirements.txt
+
+      - name: Run discovery unit tests
+        working-directory: zabbix-service
+        run: python -m unittest discover -s tests -v
