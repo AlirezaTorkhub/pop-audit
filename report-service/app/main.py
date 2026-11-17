@@ -675,13 +675,14 @@ def build_cisco(
         "Hostname",
         "IP",
         "Zabbix Host ID",
-        "Show Logging Command",
+        "Command",
         "Timestamp",
         "Severity",
         "Facility",
         "Mnemonic",
         "Message",
         "Raw",
+        "Command Status",
     ])
 
     style_header(
@@ -706,6 +707,10 @@ def build_cisco(
             device.get("raw_commands", {})
             .get("show logging", {})
         )
+        logging_command = logging.get(
+            "command",
+            "show logging",
+        )
         command_status = log_command.get(
             "status",
             "UNKNOWN",
@@ -723,13 +728,14 @@ def build_cisco(
                 device.get("hostname"),
                 device.get("ip"),
                 device.get("zabbix_hostid"),
-                command_status,
+                logging_command,
                 None,
                 None,
                 None,
                 None,
                 "No parsed Syslog events returned by show logging.",
                 None,
+                command_status,
             ])
             continue
 
@@ -741,13 +747,14 @@ def build_cisco(
                 device.get("hostname"),
                 device.get("ip"),
                 device.get("zabbix_hostid"),
-                command_status,
+                logging_command,
                 event.get("timestamp"),
                 event.get("severity"),
                 event.get("facility"),
                 event.get("mnemonic"),
                 event.get("message"),
                 event.get("raw"),
+                command_status,
             ])
 
     style_body(
@@ -759,8 +766,8 @@ def build_cisco(
 
     for row in logs.iter_rows(
         min_row=2,
-        min_col=4,
-        max_col=4,
+        min_col=11,
+        max_col=11,
     ):
         style_status_cell(
             row[0]
