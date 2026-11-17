@@ -50,17 +50,17 @@ class InferRadioTypeTests(unittest.TestCase):
             with self.subTest(hostname=hostname):
                 self.assertEqual(infer_radio_type(hostname), expected)
 
-    def test_gandi_2213_outgoing_and_incoming_direction(self):
+    def test_anonymized_outgoing_and_incoming_direction(self):
         outgoing = parse_direction(
             "SiteAlpha-1234-to-NodeLambda-950-Huawei",
-            "2213",
+            "1234",
         )
         incoming = parse_direction(
             "NodeGamma-2203-To-SiteAlpha-DW",
-            "2213",
+            "1234",
         )
 
-        self.assertEqual(outgoing[0], "2213")
+        self.assertEqual(outgoing[0], "1234")
         self.assertEqual(outgoing[1], "950")
         self.assertIsNone(incoming[0])
 
