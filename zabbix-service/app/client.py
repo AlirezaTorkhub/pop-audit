@@ -178,6 +178,9 @@ class ZabbixClient:
                     "name",
                 ],
 
+                # NCS association uses Zabbix inventory location fields.
+                "selectInventory": "extend",
+
                 "sortfield": "name",
                 "sortorder": "ASC",
             },
@@ -225,6 +228,9 @@ class ZabbixClient:
                     "templateid",
                     "name",
                 ],
+
+                # NCS association uses Zabbix inventory location fields.
+                "selectInventory": "extend",
             },
         )
 
