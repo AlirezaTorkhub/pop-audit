@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVICE_ROOT))
 
-from app.main import logging_command_for_device, parse_logging  # noqa: E402
+from app.main import audit_device, logging_command_for_device, parse_logging  # noqa: E402
 
 
 class ParseLoggingTests(unittest.TestCase):
@@ -29,6 +30,47 @@ class ParseLoggingTests(unittest.TestCase):
         self.assertEqual(
             logging_command_for_device({}),
             "show logging",
+        )
+
+    def test_ncs_audit_executes_only_bounded_logging_command(self):
+        connection = Mock()
+        executed_commands = []
+
+        def fake_run_command(_connection, command):
+            executed_commands.append(command)
+            output = (
+                "*Nov 17 10:00:01.000: %SYS-6-TEST_EVENT: synthetic NCS event"
+                if command == "show logging last 10"
+                else ""
+            )
+            return {
+                "status": "PASS",
+                "command": command,
+                "output": output,
+            }
+
+        with patch("app.main.connect_device", return_value=connection), patch(
+            "app.main.run_command",
+            side_effect=fake_run_command,
+        ):
+            result = audit_device({
+                "hostname": "NCS-Test",
+                "ip": "192.0.2.20",
+                "device_type": "ncs",
+                "zabbix_hostid": "20001",
+            })
+
+        self.assertIn("show logging last 10", executed_commands)
+        self.assertNotIn("show logging", executed_commands)
+        self.assertIn("show logging last 10", result["raw_commands"])
+        self.assertNotIn("show logging", result["raw_commands"])
+        self.assertEqual(
+            result["checks"]["logging"]["command"],
+            "show logging last 10",
+        )
+        self.assertEqual(
+            result["checks"]["logging"]["recent_10"][0]["message"],
+            "synthetic NCS event",
         )
 
     def test_returns_latest_ten_syslog_events_newest_first(self):
