@@ -703,13 +703,13 @@ def build_cisco(
             "logging",
             {}
         )
-        log_command = (
-            device.get("raw_commands", {})
-            .get("show logging", {})
-        )
         logging_command = logging.get(
             "command",
             "show logging",
+        )
+        log_command = (
+            device.get("raw_commands", {})
+            .get(logging_command, {})
         )
         command_status = log_command.get(
             "status",
