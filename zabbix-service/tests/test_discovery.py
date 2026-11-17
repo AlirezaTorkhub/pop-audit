@@ -33,17 +33,17 @@ class InferRadioTypeTests(unittest.TestCase):
     def test_real_gandi_2213_host_patterns(self):
         # Hostname patterns taken from the supplied Zabbix host-search export.
         cases = {
-            "Gandi-2213-To-Delvin-Eband": "EBand",
-            "Gandi-2213-To-Eskan-Intracom": "Intracom",
-            "Gandi-2213-To-Hakim-Intracom": "Intracom",
-            "Gandi-2213-To-Hemat-Eband": "EBand",
-            "Gandi-2213-To-Hemat-Intracom": "Intracom",
-            "Gandi-2213-To-IdeNegar-EBand": "EBand",
-            "Gandi-2213-To-LCT-380-Huawei": "RTN",
-            "Gandi-2213-To-LCT-EBand-II": "EBand",
-            "Gandi-2213-To-Soroush-Intracom": "Intracom",
-            "Gandi-2213-to-Harat-950-Huawei": "RTN",
-            "Gandi-2213-To-AmirAbad-DW": "Unknown",
+            "SiteAlpha-1234-To-NodeBeta-Eband": "EBand",
+            "SiteAlpha-1234-To-NodeGamma-Intracom": "Intracom",
+            "SiteAlpha-1234-To-NodeDelta-Intracom": "Intracom",
+            "SiteAlpha-1234-To-NodeEpsilon-Eband": "EBand",
+            "SiteAlpha-1234-To-NodeZeta-Intracom": "Intracom",
+            "SiteAlpha-1234-To-NodeEta-EBand": "EBand",
+            "SiteAlpha-1234-To-NodeTheta-380-Huawei": "RTN",
+            "SiteAlpha-1234-To-NodeIota-EBand-II": "EBand",
+            "SiteAlpha-1234-To-NodeKappa-Intracom": "Intracom",
+            "SiteAlpha-1234-to-NodeLambda-950-Huawei": "RTN",
+            "SiteAlpha-1234-To-NodeMu-DW": "Unknown",
         }
 
         for hostname, expected in cases.items():
@@ -52,11 +52,11 @@ class InferRadioTypeTests(unittest.TestCase):
 
     def test_gandi_2213_outgoing_and_incoming_direction(self):
         outgoing = parse_direction(
-            "Gandi-2213-to-Harat-950-Huawei",
+            "SiteAlpha-1234-to-NodeLambda-950-Huawei",
             "2213",
         )
         incoming = parse_direction(
-            "AmirAbad-2203-To-Gandi-DW",
+            "NodeGamma-2203-To-SiteAlpha-DW",
             "2213",
         )
 
