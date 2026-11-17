@@ -2,7 +2,6 @@ from typing import Any, Dict, List, Optional
 
 from .radio_rules import (
     aggregate_status,
-    evaluate_capacity,
     evaluate_difference,
     evaluate_interface_state,
     evaluate_rx_level,
@@ -219,15 +218,13 @@ def analyze_eband(
             capacity_key
         )
 
+        # Capacity remains a measurement because the RX modulation
+        # rule is selected from the capacity profile. Capacity Health is
+        # intentionally not calculated or included in link health.
         slot_result["capacity"] = {
             "metric": metric_result(
                 capacity_item,
                 f"Capacity slot {slot}",
-            ),
-            "health": evaluate_capacity(
-                metric_value(
-                    capacity_item
-                )
             ),
         }
 
@@ -409,7 +406,6 @@ def analyze_eband(
         slot_health_statuses.extend([
             slot["difference"]["status"],
             slot["rx_health"]["status"],
-            slot["capacity"]["health"]["status"],
             slot["rx_modulation"]["health"]["status"],
         ])
 

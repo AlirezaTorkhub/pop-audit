@@ -122,12 +122,12 @@ def evaluate_difference(value: Any) -> dict:
             "description": "Difference unavailable",
         }
 
-    if value > 7:
+    if value >= 7:
         return {
             "status": "WARNING",
             "value": value,
             "threshold": 7,
-            "description": "Difference above 7",
+            "description": "Difference at or above 7",
         }
 
     return {
