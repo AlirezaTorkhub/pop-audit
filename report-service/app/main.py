@@ -665,6 +665,114 @@ def build_cisco(
         ws
     )
 
+    # Keep the most recent parsed syslog entries on a separate
+    # sheet, with Host ID so devices sharing an IP stay distinct.
+    logs = wb.create_sheet(
+        "Cisco Logs"
+    )
+
+    logs.append([
+        "Hostname",
+        "IP",
+        "Zabbix Host ID",
+        "Show Logging Command",
+        "Timestamp",
+        "Severity",
+        "Facility",
+        "Mnemonic",
+        "Message",
+        "Raw",
+    ])
+
+    style_header(
+        logs,
+        1,
+    )
+
+    for device in data.get(
+        "results",
+        [],
+    ):
+
+        checks = device.get(
+            "checks",
+            {}
+        )
+        logging = checks.get(
+            "logging",
+            {}
+        )
+        log_command = (
+            device.get("raw_commands", {})
+            .get("show logging", {})
+        )
+        command_status = log_command.get(
+            "status",
+            "UNKNOWN",
+        )
+        recent_logs = logging.get(
+            "recent_10",
+            [],
+        )
+
+        if not isinstance(recent_logs, list):
+            recent_logs = []
+
+        if not recent_logs:
+            logs.append([
+                device.get("hostname"),
+                device.get("ip"),
+                device.get("zabbix_hostid"),
+                command_status,
+                None,
+                None,
+                None,
+                None,
+                "No parsed Syslog events returned by show logging.",
+                None,
+            ])
+            continue
+
+        for event in recent_logs:
+            if not isinstance(event, dict):
+                continue
+
+            logs.append([
+                device.get("hostname"),
+                device.get("ip"),
+                device.get("zabbix_hostid"),
+                command_status,
+                event.get("timestamp"),
+                event.get("severity"),
+                event.get("facility"),
+                event.get("mnemonic"),
+                event.get("message"),
+                event.get("raw"),
+            ])
+
+    style_body(
+        logs,
+        2,
+        logs.max_row,
+        logs.max_column,
+    )
+
+    for row in logs.iter_rows(
+        min_row=2,
+        min_col=4,
+        max_col=4,
+    ):
+        style_status_cell(
+            row[0]
+        )
+
+    logs.freeze_panes = "A2"
+
+    auto_width(
+        logs,
+        60,
+    )
+
 
 # ============================================================
 # Ericsson
