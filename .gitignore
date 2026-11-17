@@ -1,17 +1,20 @@
+# Local environment files and secrets
 .env
 .env.*
 !.env.example
-*.pem
-*.key
-__pycache__/
-.venv/
+!**/.env.example
+config/.env
 
-
-
-
-.env
-.env.*
-!.env.example
+# Python bytecode and virtual environments
 __pycache__/
 *.py[cod]
 .venv/
+venv/
+venvs/
+
+# Generated audit reports (contain operational site data)
+reports/
+
+# Local backup snapshots
+*.bak
+*.bak.*
