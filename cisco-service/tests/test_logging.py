@@ -7,10 +7,30 @@ from pathlib import Path
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVICE_ROOT))
 
-from app.main import parse_logging  # noqa: E402
+from app.main import logging_command_for_device, parse_logging  # noqa: E402
 
 
 class ParseLoggingTests(unittest.TestCase):
+    def test_ncs_uses_last_ten_logging_command(self):
+        self.assertEqual(
+            logging_command_for_device({"device_type": "ncs"}),
+            "show logging last 10",
+        )
+        self.assertEqual(
+            logging_command_for_device({"device_type": "NCS"}),
+            "show logging last 10",
+        )
+
+    def test_non_ncs_keeps_full_logging_command(self):
+        self.assertEqual(
+            logging_command_for_device({"device_type": "switch"}),
+            "show logging",
+        )
+        self.assertEqual(
+            logging_command_for_device({}),
+            "show logging",
+        )
+
     def test_returns_latest_ten_syslog_events_newest_first(self):
         lines = [
             "Syslog logging: enabled",
