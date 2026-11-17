@@ -30,8 +30,8 @@ class InferRadioTypeTests(unittest.TestCase):
         self.assertIn("BolvarShahrzad", destination_name)
 
 
-    def test_real_gandi_2213_host_patterns(self):
-        # Hostname patterns taken from the supplied Zabbix host-search export.
+    def test_realistic_host_patterns(self):
+        # Anonymized host patterns based on the supplied Zabbix host-search export.
         cases = {
             "SiteAlpha-1234-To-NodeBeta-Eband": "EBand",
             "SiteAlpha-1234-To-NodeGamma-Intracom": "Intracom",
