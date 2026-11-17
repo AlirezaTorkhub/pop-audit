@@ -718,15 +718,15 @@ def parse_logging(output: str) -> dict[str, Any]:
     syslog_pattern = re.compile(
         r"%(?P<facility>[A-Z0-9_-]+)-"
         r"(?P<severity>[0-7])-"
-        r"(?P<mnemonic>[A-Z0-9_-]+):\\s*"
+        r"(?P<mnemonic>[A-Z0-9_-]+):\s*"
         r"(?P<message>.*)",
         re.IGNORECASE,
     )
 
     timestamp_pattern = re.compile(
-        r"\\*?[A-Z][a-z]{2}\\s+\\d{1,2}\\s+"
-        r"\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?"
-        r"(?:\\s+[A-Z]{2,5})?"
+        r"\*?[A-Z][a-z]{2}\s+\d{1,2}\s+"
+        r"\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+        r"(?:\s+[A-Z]{2,5})?"
     )
 
     entries: list[dict[str, Any]] = []
