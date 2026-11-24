@@ -175,6 +175,7 @@ ZABBIX_PASSWORD
 
 ZABBIX_GROUP_ENODEB
 ZABBIX_GROUP_SWITCH
+ZABBIX_GROUP_SWITCH_AGGREGATION (optional; defaults to LTE-Backhaul-Switch-Aggregation)
 ZABBIX_GROUP_RADIO
 
 ZABBIX_SERVICE_URL
@@ -263,11 +264,12 @@ Template:
 9cells-eNODB
 ```
 
-The current implementation has a known discovery issue: it fails to discover the second baseband in some POPs.
+Baseband discovery rules:
 
-This must be investigated and corrected.
-
-Do not assume that a POP contains exactly one baseband.
+- Include the primary baseband when a complete numeric hostname token matches the requested Site Code.
+- Include a secondary baseband only when its complete numeric token has the same number of digits as the requested Site Code and the same last three digits. For example, Site Code 2392 matches secondary baseband code 7392.
+- Do not add special-case mappings or infer additional basebands from unrelated hostname fragments.
+- Ignore disabled Zabbix hosts before applying any discovery rule. Zabbix status 0 is enabled; status 1 is disabled. Hosts with missing or unknown status are excluded.
 
 ## 5.2 Primary Cisco switch
 
@@ -507,15 +509,15 @@ TH-BH-NCS
 TH-BH-RTR-NCS
 ```
 
-The application must discover the primary switch using the Site Code, then find and associate the applicable NCS switch using shared location information and other available metadata.
+The primary switch is discovered from `ZABBIX_GROUP_SWITCH` using the exact Site Code. NCS devices are discovered separately from the `LTE-Backhaul-Switch-Aggregation` group (configurable with the optional `ZABBIX_GROUP_SWITCH_AGGREGATION` setting).
 
-The association algorithm must not use a fixed mapping for Site `2225` alone.
+An active NCS candidate must be identified as a Cisco NCS device and associated with the requested POP using shared non-generic location tokens from the active primary switch and the NCS host's name, description, or Zabbix inventory location fields.
 
-It must support other POPs.
+Do not use a fixed Site Code-to-NCS mapping. If the location match is ambiguous, do not associate a candidate automatically; return a discovery warning instead.
 
-Use Zabbix host information and verified hostname patterns to match the NCS candidate to the appropriate POP. If a location match is ambiguous, do not silently associate a potentially wrong switch.
+Zabbix Host ID, not IP address, is the identity used for de-duplication. Two distinct active Zabbix hosts must remain separate devices even when they report the same management IP.
 
-The full workflow must pass both switches into the Cisco check service, and both devices must appear in the web results and Excel report.
+Disabled hosts (Zabbix status 1) and hosts with missing/unknown status must be ignored in every discovery group. The full workflow must pass both the normal Cisco switch and the associated NCS to the Cisco check service, and both must appear independently in the web results and Excel report.
 
 ## New requirement: last ten switch logs
 
