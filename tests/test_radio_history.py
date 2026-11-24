@@ -20,15 +20,11 @@ def test_rtn_modulation_equals_historical_maximum_is_healthy():
         {"clock": str(now - 3600), "value": "256"},
     ]
     result = rtn.evaluate_modulation_history(
-        256,
-        now,
-        history,
-        hours=12,
-        now=now,
+        256, now, history, hours=12, now=now,
     )
     assert result["status"] == "PASS"
     assert result["maximum"] == 256
-    assert result["sample_count"] == 3
+    assert result["sample_count"] == 4  # three history values plus current sample
 
 
 def test_rtn_modulation_below_historical_maximum_is_warning():
@@ -39,11 +35,7 @@ def test_rtn_modulation_below_historical_maximum_is_warning():
         {"clock": str(now - 3600), "value": "256"},
     ]
     result = rtn.evaluate_modulation_history(
-        128,
-        now,
-        history,
-        hours=12,
-        now=now,
+        128, now, history, hours=12, now=now,
     )
     assert result["status"] == "WARNING"
     assert result["maximum"] == 256
@@ -52,11 +44,7 @@ def test_rtn_modulation_below_historical_maximum_is_warning():
 def test_rtn_modulation_missing_history_is_unknown():
     now = 1_800_000_000
     result = rtn.evaluate_modulation_history(
-        256,
-        now,
-        [],
-        hours=12,
-        now=now,
+        256, now, [], hours=12, now=now,
     )
     assert result["status"] == "UNKNOWN"
 
