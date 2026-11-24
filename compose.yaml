@@ -9,14 +9,50 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHON_DOTENV_DISABLED: "true"
-      POP_AUDIT_DB_PATH: "/opt/pop-audit/data/jobs.sqlite3"
+      ORCHESTRATOR_URL: "http://orchestrator:8001"
       ZABBIX_SERVICE_URL: "http://zabbix-service:8002"
       CISCO_SERVICE_URL: "http://cisco-service:8003"
       ERICSSON_SERVICE_URL: "http://ericsson-service:8004"
       RADIO_SERVICE_URL: "http://radio-service:8005"
       REPORT_SERVICE_URL: "http://report-service:8006"
     ports:
-      - "${POP_AUDIT_HOST_PORT:-8000}:8000"
+      - "${POP_AUDIT_HOST_PORT:-18000}:8000"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      report-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8000)) == 0 else 1)"
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    networks:
+      - pop-audit-internal
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHON_DOTENV_DISABLED: "true"
+      POP_AUDIT_DB_PATH: "/opt/pop-audit/data/jobs.sqlite3"
+      ZABBIX_SERVICE_URL: "http://zabbix-service:8002"
+      CISCO_SERVICE_URL: "http://cisco-service:8003"
+      ERICSSON_SERVICE_URL: "http://ericsson-service:8004"
+      RADIO_SERVICE_URL: "http://radio-service:8005"
+      REPORT_SERVICE_URL: "http://report-service:8006"
     volumes:
       - ./data:/opt/pop-audit/data
     depends_on:
@@ -35,7 +71,7 @@ services:
         - CMD
         - python
         - -c
-        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8000)) == 0 else 1)"
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',8001)) == 0 else 1)"
       interval: 10s
       timeout: 4s
       retries: 6
@@ -60,7 +96,9 @@ services:
       ZABBIX_PASSWORD: "${ZABBIX_PASSWORD:?ZABBIX_PASSWORD is required in config/.env}"
       ZABBIX_GROUP_ENODEB: "${ZABBIX_GROUP_ENODEB:?ZABBIX_GROUP_ENODEB is required in config/.env}"
       ZABBIX_GROUP_SWITCH: "${ZABBIX_GROUP_SWITCH:?ZABBIX_GROUP_SWITCH is required in config/.env}"
+      ZABBIX_GROUP_SWITCH_AGGREGATION: "${ZABBIX_GROUP_SWITCH_AGGREGATION:-LTE-Backhaul-Switch-Aggregation}"
       ZABBIX_GROUP_RADIO: "${ZABBIX_GROUP_RADIO:?ZABBIX_GROUP_RADIO is required in config/.env}"
+      ZABBIX_GROUP_RADIO_HUAWEI: "${ZABBIX_GROUP_RADIO_HUAWEI:-LTE-Backhaul-Radio-Huawei}"
     healthcheck:
       test:
         - CMD
@@ -150,6 +188,7 @@ services:
       MODULATION_EXPECTED: "${MODULATION_EXPECTED:-13}"
       RADIO_ANALYSIS_HOURS: "${RADIO_ANALYSIS_HOURS:-6}"
       RADIO_HISTORY_DAYS: "${RADIO_HISTORY_DAYS:-7}"
+      RADIO_MODULATION_HISTORY_HOURS: "${RADIO_MODULATION_HISTORY_HOURS:-12}"
       MAX_CONCURRENT_RADIO_LINKS: "${MAX_CONCURRENT_RADIO_LINKS:-4}"
     depends_on:
       zabbix-service:

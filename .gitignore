@@ -1,17 +1,31 @@
+# Environment and secrets
 .env
 .env.*
 !.env.example
-*.pem
-*.key
-__pycache__/
-.venv/
+config/.env
 
-
-
-
-.env
-.env.*
-!.env.example
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
 .venv/
+venv/
+venvs/
+
+# Tests and tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime data and generated reports
+data/
+reports/
+logs/
+*.log
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

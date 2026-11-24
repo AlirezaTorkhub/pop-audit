@@ -1,0 +1,62 @@
+name: POP Audit tests
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest requests python-dotenv pydantic fastapi openpyxl netmiko paramiko pyyaml
+
+      - name: Compile all Python services
+        run: |
+          python -m compileall -q             gateway orchestrator zabbix-service cisco-service             ericsson-service radio-service report-service tests
+
+      - name: Check frontend JavaScript syntax
+        run: node --check gateway/frontend/static/app.js
+
+      - name: Validate Docker Compose
+        run: |
+          cp config/.env.example config/.env
+          if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+            docker compose --env-file config/.env config --quiet
+          else
+            python - <<'PY'
+          import yaml
+          from pathlib import Path
+
+          document = yaml.safe_load(Path("compose.yaml").read_text())
+          services = document.get("services", {})
+          expected = {
+              "gateway", "orchestrator", "zabbix-service",
+              "cisco-service", "ericsson-service",
+              "radio-service", "report-service",
+          }
+          assert set(services) == expected, (set(services), expected)
+          published = [
+              name for name, service in services.items()
+              if service.get("ports")
+          ]
+          assert published == ["gateway"], published
+          assert services["gateway"]["environment"]["ORCHESTRATOR_URL"] == "http://orchestrator:8001"
+          print("Compose YAML topology validation passed.")
+          PY
+          fi
+
+      - name: Run regression tests
+        run: pytest -q

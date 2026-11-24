@@ -409,7 +409,6 @@ def analyze_eband(
         slot_health_statuses.extend([
             slot["difference"]["status"],
             slot["rx_health"]["status"],
-            slot["capacity"]["health"]["status"],
             slot["rx_modulation"]["health"]["status"],
         ])
 

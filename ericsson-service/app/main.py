@@ -390,19 +390,17 @@ def parse_alarms(
     major_count = 0
     total_count = len(alarms)
 
+    summary_available = critical_match is not None
     if critical_match:
-        total_count = int(
-            critical_match.group(1)
-        )
-        critical_count = int(
-            critical_match.group(2)
-        )
-        major_count = int(
-            critical_match.group(3)
-        )
+        total_count = int(critical_match.group(1))
+        critical_count = int(critical_match.group(2))
+        major_count = int(critical_match.group(3))
 
-    # Prefer explicit Moshell summary when available.
-    if critical_count > 0:
+    # No recognized alarm rows and no explicit summary means parsing
+    # was inconclusive; it must never be reported as a healthy alarm state.
+    if not summary_available and not alarms:
+        status = "NOT_AVAILABLE"
+    elif critical_count > 0:
         status = "CRITICAL"
     elif major_count > 0:
         status = "WARNING"
@@ -417,6 +415,7 @@ def parse_alarms(
         "critical": critical_count,
         "major": major_count,
         "alarms": alarms,
+        "parsed": summary_available or bool(alarms),
     }
 
 
@@ -459,6 +458,73 @@ def parse_clock(
         "state": state,
         "required_value": 6,
         "required_state": "RNT_TIME_LOCKED",
+    }
+
+
+
+def parse_alarm_category(
+    alarm_result: dict[str, Any],
+    pattern: str,
+    category: str,
+) -> dict[str, Any]:
+    """Classify alarms only after the complete alarm list was parsed."""
+    if not alarm_result.get("parsed"):
+        return {
+            "status": "NOT_AVAILABLE",
+            "category": category,
+            "count": 0,
+            "alarms": [],
+            "reason": "Moshell alarm output could not be parsed reliably.",
+        }
+
+    matcher = re.compile(pattern, re.IGNORECASE)
+    all_alarms = alarm_result.get("alarms") or []
+    matched = [
+        alarm for alarm in all_alarms
+        if matcher.search(
+            " ".join([
+                str(alarm.get("problem") or ""),
+                str(alarm.get("additional_text") or ""),
+                str(alarm.get("raw") or ""),
+            ])
+        )
+    ]
+
+    if not matched:
+        reported_total = int(alarm_result.get("total") or 0)
+        parsed_rows = len(all_alarms)
+        if reported_total > parsed_rows:
+            return {
+                "status": "NOT_AVAILABLE",
+                "category": category,
+                "count": 0,
+                "alarms": [],
+                "reason": "Alarm output is incomplete; absence cannot be confirmed.",
+            }
+        return {
+            "status": "PASS",
+            "category": category,
+            "count": 0,
+            "alarms": [],
+            "reason": f"No active {category} alarms were found.",
+        }
+
+    severities = [str(alarm.get("severity") or "UNKNOWN").upper() for alarm in matched]
+    if "CRITICAL" in severities:
+        status = "CRITICAL"
+    elif "MAJOR" in severities or "WARNING" in severities:
+        status = "WARNING"
+    elif "UNKNOWN" in severities:
+        status = "UNKNOWN"
+    else:
+        status = "WARNING"
+
+    return {
+        "status": status,
+        "category": category,
+        "count": len(matched),
+        "alarms": matched,
+        "reason": f"{len(matched)} active {category} alarm(s) found.",
     }
 
 
@@ -608,6 +674,17 @@ def run_moshell_session(
             outputs["alt"]
         )
 
+        door_alarm_result = parse_alarm_category(
+            alarm_result,
+            r"\bdoor\b|door.?open|cabinet.?door",
+            "Door",
+        )
+        ac_alarm_result = parse_alarm_category(
+            alarm_result,
+            r"\bAC\b|alternating current|rectifier|power supply|power system|mains|utility power",
+            "AC",
+        )
+
         clock_result = parse_clock(
             outputs["get . clock"]
         )
@@ -616,6 +693,8 @@ def run_moshell_session(
             lt_result["status"],
             cell_result["status"],
             alarm_result["status"],
+            door_alarm_result["status"],
+            ac_alarm_result["status"],
             clock_result["status"],
         ])
 
@@ -628,6 +707,8 @@ def run_moshell_session(
                 "lt_all": lt_result,
                 "cells": cell_result,
                 "alarms": alarm_result,
+                "door_alarm": door_alarm_result,
+                "ac_alarm": ac_alarm_result,
                 "clock": clock_result,
             },
             "commands": [
@@ -717,6 +798,8 @@ def check(payload: dict):
                 "hostname": hostname,
                 "ip": ip,
                 "zabbix_hostid": hostid,
+                "role": bb.get("role", "BB1"),
+                "site_code": bb.get("site_code"),
                 **analysis,
             })
 
@@ -726,6 +809,8 @@ def check(payload: dict):
                 "hostname": hostname,
                 "ip": ip,
                 "zabbix_hostid": hostid,
+                "role": bb.get("role", "BB1"),
+                "site_code": bb.get("site_code"),
                 "status": "UNKNOWN",
                 "message": (
                     "Ericsson/Moshell check failed."

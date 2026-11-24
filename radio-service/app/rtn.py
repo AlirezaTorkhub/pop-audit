@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 
@@ -122,12 +123,12 @@ def evaluate_difference(value: Any) -> dict:
             "description": "Difference unavailable",
         }
 
-    if value > 7:
+    if value >= 7:
         return {
             "status": "WARNING",
             "value": value,
             "threshold": 7,
-            "description": "Difference above 7",
+            "description": "Difference at or above 7",
         }
 
     return {
@@ -235,12 +236,22 @@ def extract_item_ids(expression: str) -> list[str]:
 def extract_destination(
     description: str,
 ) -> str | None:
+    """Extract a destination without restricting it to a legacy POP allow-list."""
+    upper = re.sub(r"[_-]+", " ", (description or "").upper())
 
-    upper = (description or "").upper()
-
+    # Keep recognizable legacy aliases for backwards-compatible display.
     for destination in DESTINATIONS:
-        if destination in upper:
+        if destination in upper.replace(" ", ""):
             return destination
+
+    match = re.search(
+        r"\b(?:TO|TOWARD|TOWARDS|FOR|DESTINATION)\s+"
+        r"([A-Z][A-Z0-9]*(?:\s+[A-Z][A-Z0-9]*){0,2})",
+        upper,
+    )
+    if match:
+        candidate = re.sub(r"\s+", " ", match.group(1)).strip()
+        return candidate or None
 
     return None
 
@@ -593,10 +604,100 @@ def ensure_link(
     )
 
 
+def evaluate_modulation_history(
+    current_value: Any,
+    current_clock: Any,
+    history: list[dict] | None,
+    *,
+    hours: int = 12,
+    now: int | None = None,
+) -> dict:
+    """Compare the current value with real numeric Zabbix history samples."""
+    now = int(now if now is not None else time.time())
+    window_start = now - hours * 3600
+    current = to_float(current_value)
+
+    try:
+        current_ts = int(current_clock)
+    except (TypeError, ValueError):
+        current_ts = 0
+
+    if current is None:
+        return {
+            "status": "UNKNOWN",
+            "current": None,
+            "maximum": None,
+            "sample_count": 0,
+            "hours": hours,
+            "reason": "Current modulation is not a valid numeric value.",
+        }
+
+    if current_ts < window_start or current_ts > now + 60:
+        return {
+            "status": "UNKNOWN",
+            "current": current,
+            "maximum": None,
+            "sample_count": 0,
+            "hours": hours,
+            "current_timestamp": current_ts or None,
+            "reason": "Current modulation sample is stale or has an invalid timestamp.",
+        }
+
+    samples: list[tuple[int, float]] = []
+    for sample in history or []:
+        value = to_float(sample.get("value"))
+        try:
+            clock = int(sample.get("clock") or 0)
+        except (TypeError, ValueError):
+            continue
+        if value is not None and window_start <= clock <= now:
+            samples.append((clock, value))
+
+    if not samples:
+        return {
+            "status": "UNKNOWN",
+            "current": current,
+            "maximum": None,
+            "sample_count": 0,
+            "hours": hours,
+            "current_timestamp": current_ts,
+            "reason": "No numeric Zabbix history samples were returned for the requested window.",
+        }
+
+    # Make sure the current measurement participates in the maximum even if
+    # Zabbix history and item.lastvalue are sampled on slightly different ticks.
+    if not any(clock == current_ts for clock, _ in samples):
+        samples.append((current_ts, current))
+
+    maximum = max(value for _, value in samples)
+    max_clock = max(clock for clock, value in samples if value == maximum)
+    if current == maximum:
+        status = "PASS"
+        reason = "Current modulation equals the maximum observed modulation in the last 12 hours."
+    else:
+        status = "WARNING"
+        reason = "Current modulation is below the maximum observed modulation in the last 12 hours."
+
+    return {
+        "status": status,
+        "current": current,
+        "maximum": maximum,
+        "sample_count": len(samples),
+        "hours": hours,
+        "current_timestamp": current_ts,
+        "maximum_timestamp": max_clock,
+        "reason": reason,
+    }
+
+
 def analyze_rtn(
     items: list[dict],
     triggers: list[dict],
+    history_by_itemid: dict[str, list[dict]] | None = None,
+    history_hours: int = 12,
 ) -> dict:
+
+    history_by_itemid = history_by_itemid or {}
 
     modulation = modulation_links(
         items,
@@ -631,8 +732,9 @@ def analyze_rtn(
             "destination"
         ]
 
-        if destination not in DESTINATIONS:
-            continue
+        # Destination names are dynamic; do not reject newly deployed POPs.
+        if not destination:
+            destination = entry.get("key") or "UNKNOWN-LINK"
 
         link = ensure_link(
             link_results,
@@ -659,32 +761,36 @@ def analyze_rtn(
 
     for entry in modulation:
 
-        destination = entry[
-            "destination"
-        ]
-
-        if not destination:
-            continue
+        destination = entry.get("destination") or entry.get("link") or "UNKNOWN-LINK"
 
         link = ensure_link(
             link_results,
             destination,
         )
 
-        check = evaluate_modulation(
-            entry["value"]
+        threshold_check = evaluate_modulation(entry["value"])
+        history_check = evaluate_modulation_history(
+            entry["value"],
+            entry.get("clock"),
+            history_by_itemid.get(str(entry["itemid"]), []),
+            hours=history_hours,
         )
 
+        check_status = aggregate_status([
+            threshold_check["status"],
+            history_check["status"],
+        ])
         link["modulation"].append({
             "itemid": entry["itemid"],
             "link": entry["link"],
             "value": entry["value"],
-            **check,
+            "clock": entry.get("clock"),
+            "status": check_status,
+            "threshold_check": threshold_check,
+            "history_comparison": history_check,
         })
 
-        link["statuses"].append(
-            check["status"]
-        )
+        link["statuses"].append(check_status)
 
     # ---------------------------------------------------------
     # Traffic
@@ -716,12 +822,7 @@ def analyze_rtn(
             traffic_entry
         )
 
-        destination = entry[
-            "destination"
-        ]
-
-        if not destination:
-            continue
+        destination = entry.get("destination") or entry.get("decoded_source") or entry.get("source") or "UNKNOWN-LINK"
 
         link = ensure_link(
             link_results,

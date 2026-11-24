@@ -130,14 +130,14 @@ def status_result(
 # SSH / Netmiko
 # ============================================================
 
-def connect_device(ip: str):
+def connect_device(ip: str, device_type: str = "cisco_ios"):
     if not SSH_USERNAME or not SSH_PASSWORD:
         raise RuntimeError(
             "SSH_USERNAME or SSH_PASSWORD is not configured."
         )
 
     device = {
-        "device_type": "cisco_ios",
+        "device_type": device_type,
         "host": ip,
         "username": SSH_USERNAME,
         "password": SSH_PASSWORD,
@@ -416,10 +416,11 @@ def parse_interfaces_detail(
                     if input_errors_match
                     else 0
                 ),
+                # Missing CRC text is unknown, not a measured zero.
                 "crc": (
                     int(crc_match.group(1))
                     if crc_match
-                    else 0
+                    else None
                 ),
                 "output_errors": (
                     int(output_errors_match.group(1))
@@ -685,7 +686,7 @@ def parse_inventory(output: str) -> list[dict[str, Any]]:
 # Logging
 # ============================================================
 
-def parse_logging(output: str) -> dict[str, Any]:
+def parse_logging(output: str, limit: int = 10) -> dict[str, Any]:
 
     lines = [
         line.rstrip()
@@ -693,7 +694,7 @@ def parse_logging(output: str) -> dict[str, Any]:
         if line.strip()
     ]
 
-    recent = lines[-20:]
+    recent = lines[-max(1, limit):]
 
     severity_counts = {
         "EMERGENCY": 0,
@@ -740,20 +741,24 @@ def parse_logging(output: str) -> dict[str, Any]:
         + severity_counts["CRITICAL"]
         + severity_counts["ERROR"]
     )
-
     warning_count = severity_counts["WARNING"]
 
-    if critical_count > 0:
-        status = "WARNING"
+    if not lines:
+        status = "NOT_AVAILABLE"
+    elif critical_count > 0:
+        status = "CRITICAL"
     elif warning_count > 0:
-        status = "PASS"
+        status = "WARNING"
     else:
         status = "PASS"
 
     return {
         "status": status,
         "severity_counts": severity_counts,
-        "recent_20": recent,
+        "latest": recent,
+        "recent": recent,
+        "recent_10": recent,
+        "event_count": len(recent),
     }
 
 
@@ -848,6 +853,9 @@ def audit_device(
         "hostname": hostname,
         "ip": ip,
         "zabbix_hostid": zabbix_hostid,
+        "device_type": device.get("device_type", "switch"),
+        "role": device.get("role", "primary_switch"),
+        "site_identity": device.get("site_identity"),
         "status": "UNKNOWN",
     }
 
@@ -857,6 +865,10 @@ def audit_device(
             "status": "NOT_AVAILABLE",
             "message": "Cisco device has no IP address.",
         }
+
+    device_type = str(device.get("device_type") or "switch").lower()
+    if device_type in {"ncs", "ncs540", "ncs_540"}:
+        return audit_ncs_device(device)
 
     command_outputs: dict[str, dict[str, Any]] = {}
 
@@ -1011,11 +1023,11 @@ def audit_device(
 
         # Any interface with CRC / serious errors becomes WARNING.
         for item in interfaces:
-            crc = item.get("crc", 0) or 0
+            crc = item.get("crc")
             input_errors = item.get("input_errors", 0) or 0
             output_errors = item.get("output_errors", 0) or 0
 
-            if crc > 0:
+            if crc is not None and crc > 0:
                 item["health"] = aggregate_status(
                     [
                         item.get(
@@ -1054,9 +1066,23 @@ def audit_device(
             interface_statuses
         )
 
+        crc_problems = [
+            {
+                "interface": item.get("interface"),
+                "description": item.get("description"),
+                "crc": item.get("crc"),
+                "status": "WARNING",
+            }
+            for item in interfaces
+            if item.get("crc") is not None and item.get("crc") > 0
+        ]
+
         logging_data = parse_logging(
-            logging_output
+            logging_output,
+            limit=10,
         )
+        if not logging_output.strip():
+            logging_data["status"] = "NOT_AVAILABLE"
 
         environment = parse_environment(
             command_outputs
@@ -1124,6 +1150,10 @@ def audit_device(
                     "status": interface_health,
                     "count": len(interfaces),
                     "data": interfaces,
+                    "problems": {
+                        "crc_count": len(crc_problems),
+                        "crc": crc_problems,
+                    },
                 },
                 "logging": logging_data,
                 "environment": environment,
@@ -1160,6 +1190,233 @@ def audit_device(
 
     finally:
 
+        if connection:
+            try:
+                connection.disconnect()
+            except Exception:
+                pass
+
+
+# ============================================================
+# Cisco NCS 540 / IOS-XR profile
+# ============================================================
+
+NCS_COMMANDS = [
+    "show version",
+    "show inventory",
+    "show interfaces description",
+    "show interfaces",
+    "show logging last 10",
+]
+
+
+def parse_ncs_interfaces_description(output: str) -> list[dict[str, Any]]:
+    """Parse IOS-XR show interfaces description output."""
+    results: list[dict[str, Any]] = []
+    state_pattern = re.compile(
+        r"^(up|down|admin[- ]down|shutdown|unknown|testing|dormant)$",
+        re.IGNORECASE,
+    )
+
+    for raw in output.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        if re.search(r"\bInterface\b.*\bStatus\b.*\bProtocol\b", line, re.IGNORECASE):
+            continue
+
+        parts = re.split(r"\s{2,}", line.strip(), maxsplit=3)
+        if len(parts) < 3:
+            continue
+
+        interface = parts[0].strip()
+        status = parts[1].strip()
+        protocol = parts[2].strip()
+        description = parts[3].strip() if len(parts) > 3 else ""
+
+        if not state_pattern.match(status):
+            continue
+        if not state_pattern.match(protocol):
+            protocol = None
+
+        state = status.lower()
+        protocol_state = str(protocol).lower()
+        health = (
+            "PASS" if state == "up" and protocol_state == "up"
+            else "WARNING" if state in {"down", "admin down", "admin-down", "shutdown"}
+            else "UNKNOWN"
+        )
+
+        results.append({
+            "interface": interface,
+            "status_raw": status,
+            "protocol": protocol,
+            "description": description,
+            "health": health,
+        })
+
+    return results
+
+
+def audit_ncs_device(device: dict[str, Any]) -> dict[str, Any]:
+    hostname = device.get("hostname")
+    ip = device.get("ip")
+    zabbix_hostid = device.get("zabbix_hostid")
+    base = {
+        "hostname": hostname,
+        "ip": ip,
+        "zabbix_hostid": zabbix_hostid,
+        "device_type": "ncs540",
+        "role": device.get("role", "ncs_aggregation"),
+        "site_identity": device.get("site_identity"),
+        "status": "UNKNOWN",
+    }
+
+    if not ip:
+        return {
+            **base,
+            "status": "NOT_AVAILABLE",
+            "message": "NCS 540 has no IP address.",
+        }
+
+    connection = None
+    command_outputs: dict[str, dict[str, Any]] = {}
+    try:
+        # NCS 540 runs IOS-XR; do not connect using the IOS driver.
+        connection = connect_device(ip, device_type="cisco_xr")
+
+        for setup_command in ("terminal length 0", "terminal width 511"):
+            try:
+                connection.send_command(
+                    setup_command,
+                    read_timeout=SSH_COMMAND_TIMEOUT,
+                )
+            except Exception:
+                pass
+
+        for command in NCS_COMMANDS:
+            command_outputs[command] = run_command(connection, command)
+
+        description_output = command_outputs.get(
+            "show interfaces description", {}
+        ).get("output", "")
+        detail_output = command_outputs.get(
+            "show interfaces", {}
+        ).get("output", "")
+        logging_output = command_outputs.get(
+            "show logging last 10", {}
+        ).get("output", "")
+
+        interface_rows = parse_ncs_interfaces_description(description_output)
+        details = parse_interfaces_detail(detail_output)
+        detail_by_name = {
+            str(row.get("interface", "")).lower(): row
+            for row in details
+            if row.get("interface")
+        }
+
+        interfaces: list[dict[str, Any]] = []
+        for row in interface_rows:
+            detail = detail_by_name.get(str(row["interface"]).lower())
+            merged = {**row}
+            if detail:
+                merged.update({
+                    "line_state": detail.get("line_state"),
+                    "crc": detail.get("crc"),
+                    "input_errors": detail.get("input_errors"),
+                    "output_errors": detail.get("output_errors"),
+                    "output_drops": detail.get("output_drops"),
+                    "carrier_transitions": detail.get("carrier_transitions"),
+                    "bandwidth_kbps": detail.get("bandwidth_kbps"),
+                })
+            else:
+                merged.update({
+                    "crc": None,
+                    "input_errors": None,
+                    "output_errors": None,
+                    "output_drops": None,
+                })
+
+            crc = merged.get("crc")
+            if crc is not None and crc > 0:
+                merged["health"] = aggregate_status([
+                    merged.get("health", "UNKNOWN"),
+                    "WARNING",
+                ])
+                merged["health_reason"] = f"CRC errors detected: {crc}."
+            interfaces.append(merged)
+
+        crc_problems = [
+            {
+                "interface": row.get("interface"),
+                "description": row.get("description"),
+                "crc": row.get("crc"),
+                "health": "WARNING",
+            }
+            for row in interfaces
+            if row.get("crc") is not None and row.get("crc") > 0
+        ]
+
+        logging_data = parse_logging(logging_output, limit=10)
+        if (
+            command_outputs.get("show logging last 10", {}).get("status") != "PASS"
+            or not logging_output.strip()
+        ):
+            logging_data["status"] = "NOT_AVAILABLE"
+
+        interface_status = aggregate_status([
+            row.get("health", "UNKNOWN") for row in interfaces
+        ]) if interfaces else "UNKNOWN"
+
+        overall = aggregate_status([
+            interface_status,
+            logging_data.get("status", "UNKNOWN"),
+        ])
+
+        return {
+            **base,
+            "status": overall,
+            "checks": {
+                "connectivity": status_result(
+                    "PASS",
+                    "SSH connection established using Cisco IOS-XR profile.",
+                ),
+                "interfaces": {
+                    "status": interface_status,
+                    "count": len(interfaces),
+                    "data": interfaces,
+                    "problems": {
+                        "crc_count": len(crc_problems),
+                        "crc": crc_problems,
+                    },
+                },
+                "logging": logging_data,
+            },
+            "raw_commands": command_outputs,
+        }
+
+    except NetmikoAuthenticationException as exc:
+        return {
+            **base,
+            "status": "CRITICAL",
+            "message": "NCS SSH authentication failed.",
+            "error": str(exc),
+        }
+    except NetmikoTimeoutException as exc:
+        return {
+            **base,
+            "status": "CRITICAL",
+            "message": "NCS SSH connection timed out.",
+            "error": str(exc),
+        }
+    except Exception as exc:
+        return {
+            **base,
+            "status": "UNKNOWN",
+            "message": "NCS 540 health check failed.",
+            "error": str(exc),
+        }
+    finally:
         if connection:
             try:
                 connection.disconnect()

@@ -2,31 +2,18 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>POP Audit</title>
-
-    <link
-        rel="stylesheet"
-        href="/static/style.css"
-    >
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f5f3ed">
+    <title>POP Audit | Site Health Check</title>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
-
 <body>
-
 <div class="app">
-
     <header class="topbar">
         <div>
             <div class="brand">POP AUDIT</div>
-            <div class="subtitle">
-                Site Health Check Platform
-            </div>
+            <div class="subtitle">ISP Network Operations · Site Health Check</div>
         </div>
-
         <div class="header-status">
             <span id="apiStatusDot" class="status-dot"></span>
             <span id="apiStatusText">Checking API...</span>
@@ -34,368 +21,157 @@
     </header>
 
     <main>
-
-        <!-- ================================================= -->
-        <!-- AUDIT CONTROL -->
-        <!-- ================================================= -->
-
         <section class="panel control-panel">
-
             <div class="section-title">
                 <div>
-                    <h2>Start Audit</h2>
-                    <p>
-                        Enter Site Code to discover and audit the complete POP.
-                    </p>
+                    <p class="eyebrow">NETWORK OPERATIONS CENTER</p>
+                    <h1>POP Site Audit</h1>
+                    <p>Enter a Site Code. POP Audit discovers and checks the associated infrastructure automatically.</p>
                 </div>
             </div>
-
             <div class="audit-form">
-
                 <div class="field">
-                    <label for="siteCode">
-                        Site Code
-                    </label>
-
-                    <input
-                        id="siteCode"
-                        type="text"
-                        inputmode="numeric"
-                        autocomplete="off"
-                        placeholder="Example: 2488"
-                    >
+                    <label for="siteCode">Site Code</label>
+                    <input id="siteCode" type="text" inputmode="numeric" maxlength="4"
+                           autocomplete="off" placeholder="Example: 2213">
                 </div>
-
-                <button
-                    id="startAuditBtn"
-                    class="btn btn-primary"
-                >
-                    START AUDIT
-                </button>
-
+                <button id="startAuditBtn" class="btn btn-primary">START AUDIT</button>
             </div>
-
-            <div
-                id="formMessage"
-                class="message hidden"
-            ></div>
-
+            <div id="formMessage" class="message hidden"></div>
         </section>
 
-
-        <!-- ================================================= -->
-        <!-- JOB -->
-        <!-- ================================================= -->
-
-        <section
-            id="jobPanel"
-            class="panel hidden"
-        >
-
+        <section id="jobPanel" class="panel hidden">
             <div class="job-header">
-
                 <div>
-                    <div class="eyebrow">
-                        CURRENT AUDIT
-                    </div>
-
-                    <div
-                        id="jobId"
-                        class="job-id"
-                    >
-                        -
-                    </div>
+                    <div class="eyebrow">CURRENT AUDIT</div>
+                    <div id="jobId" class="job-id">-</div>
                 </div>
-
-                <div
-                    id="jobStatusBadge"
-                    class="status-badge unknown"
-                >
-                    UNKNOWN
-                </div>
-
+                <div id="jobStatusBadge" class="status-badge status-unknown">QUEUED</div>
             </div>
-
             <div class="progress-wrap">
-
                 <div class="progress-labels">
                     <span id="phaseDiscovery">DISCOVERY</span>
                     <span id="phaseRunning">RUNNING</span>
                     <span id="phaseCompleted">COMPLETED</span>
                 </div>
-
                 <div class="progress-track">
-                    <div
-                        id="progressBar"
-                        class="progress-bar"
-                    ></div>
+                    <div id="progressBar" class="progress-bar"></div>
                 </div>
-
-                <div
-                    id="jobStatusText"
-                    class="job-status-text"
-                >
-                    Waiting...
-                </div>
-
+                <div id="jobStatusText" class="job-status-text">Waiting...</div>
             </div>
-
         </section>
 
-
-        <!-- ================================================= -->
-        <!-- OVERALL -->
-        <!-- ================================================= -->
-
-        <section
-            id="resultPanel"
-            class="hidden"
-        >
-
-            <div class="overall-row">
-
-                <div class="overall-card">
-                    <div class="eyebrow">
-                        OVERALL STATUS
-                    </div>
-
-                    <div
-                        id="overallStatus"
-                        class="overall-status unknown"
-                    >
-                        UNKNOWN
-                    </div>
-
-                    <div
-                        id="siteSummary"
-                        class="overall-meta"
-                    >
-                        Site -
-                    </div>
+        <section id="resultPanel" class="hidden">
+            <div class="result-heading">
+                <div>
+                    <p class="eyebrow">AUDIT RESULT</p>
+                    <h2 id="siteSummary">Site -</h2>
+                    <p id="auditTimestamp" class="muted">Completed audit</p>
                 </div>
-
                 <div class="action-card">
-
-                    <button
-                        id="excelBtn"
-                        class="btn btn-success"
-                        disabled
-                    >
-                        DOWNLOAD EXCEL
-                    </button>
-
-                    <button
-                        id="pdfBtn"
-                        class="btn btn-secondary"
-                        disabled
-                    >
-                        DOWNLOAD PDF
-                    </button>
-
+                    <button id="excelBtn" class="btn btn-success" disabled>DOWNLOAD EXCEL</button>
+                    <button id="pdfBtn" class="btn btn-secondary" disabled>DOWNLOAD PDF</button>
                 </div>
-
             </div>
 
-
-            <!-- ================================================= -->
-            <!-- SERVICE CARDS -->
-            <!-- ================================================= -->
-
-            <div class="service-grid">
-
-                <div
-                    id="cardCisco"
-                    class="service-card unknown"
-                >
-                    <div class="service-name">
-                        CISCO
-                    </div>
-
-                    <div
-                        id="statusCisco"
-                        class="service-status"
-                    >
-                        UNKNOWN
-                    </div>
-
-                    <div
-                        id="metaCisco"
-                        class="service-meta"
-                    >
-                        Waiting for audit
-                    </div>
-                </div>
-
-
-                <div
-                    id="cardEricsson"
-                    class="service-card unknown"
-                >
-                    <div class="service-name">
-                        ERICSSON
-                    </div>
-
-                    <div
-                        id="statusEricsson"
-                        class="service-status"
-                    >
-                        UNKNOWN
-                    </div>
-
-                    <div
-                        id="metaEricsson"
-                        class="service-meta"
-                    >
-                        Waiting for audit
-                    </div>
-                </div>
-
-
-                <div
-                    id="cardRadio"
-                    class="service-card unknown"
-                >
-                    <div class="service-name">
-                        RADIO
-                    </div>
-
-                    <div
-                        id="statusRadio"
-                        class="service-status"
-                    >
-                        UNKNOWN
-                    </div>
-
-                    <div
-                        id="metaRadio"
-                        class="service-meta"
-                    >
-                        Waiting for audit
-                    </div>
-                </div>
-
-            </div>
-
-
-            <!-- ================================================= -->
-            <!-- DETAILS -->
-            <!-- ================================================= -->
-
-            <div class="details-grid">
-
-                <section class="detail-panel">
-
-                    <div class="detail-header">
-                        <div>
-                            <h3>Cisco</h3>
-                            <span>
-                                Switch health and interfaces
-                            </span>
-                        </div>
-
-                        <div
-                            id="ciscoDetailStatus"
-                            class="small-status unknown"
-                        >
-                            UNKNOWN
-                        </div>
-                    </div>
-
-                    <div id="ciscoDetails">
-                        <div class="empty-state">
-                            No data
-                        </div>
-                    </div>
-
-                </section>
-
-
-                <section class="detail-panel">
-
-                    <div class="detail-header">
-                        <div>
-                            <h3>Ericsson</h3>
-                            <span>
-                                Cells, alarms and clock
-                            </span>
-                        </div>
-
-                        <div
-                            id="ericssonDetailStatus"
-                            class="small-status unknown"
-                        >
-                            UNKNOWN
-                        </div>
-                    </div>
-
-                    <div id="ericssonDetails">
-                        <div class="empty-state">
-                            No data
-                        </div>
-                    </div>
-
-                </section>
-
-
-                <section class="detail-panel detail-panel-wide">
-
-                    <div class="detail-header">
-                        <div>
-                            <h3>Radio</h3>
-                            <span>
-                                RTN and EBand link health
-                            </span>
-                        </div>
-
-                        <div
-                            id="radioDetailStatus"
-                            class="small-status unknown"
-                        >
-                            UNKNOWN
-                        </div>
-                    </div>
-
-                    <div id="radioDetails">
-                        <div class="empty-state">
-                            No data
-                        </div>
-                    </div>
-
-                </section>
-
-            </div>
-
-
-            <!-- ================================================= -->
-            <!-- RAW SUMMARY -->
-            <!-- ================================================= -->
-
-            <section class="panel audit-summary-panel">
-
-                <div class="detail-header">
+            <section class="panel section-panel">
+                <div class="section-heading">
                     <div>
-                        <h3>Audit Summary</h3>
-                        <span>
-                            Service-level result aggregation
-                        </span>
+                        <p class="eyebrow">AT A GLANCE</p>
+                        <h2>POP Component Status</h2>
                     </div>
+                    <span id="overallStatus" class="status-pill status-unknown">UNKNOWN</span>
                 </div>
-
-                <div id="auditSummary"></div>
-
+                <div id="componentStatusGrid" class="component-status-grid"></div>
             </section>
 
-        </section>
+            <section class="section-panel">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">RADIO ACCESS NETWORK</p>
+                        <h2>Baseband Audit</h2>
+                        <p class="muted">Both Basebands are audited independently using the same Moshell checks.</p>
+                    </div>
+                </div>
+                <div id="basebandGrid" class="baseband-grid">
+                    <div class="bb-card empty-state">Waiting for Baseband results</div>
+                    <div class="bb-card empty-state">Waiting for Baseband results</div>
+                </div>
+            </section>
 
+            <section class="section-panel">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">TRANSPORT NETWORK</p>
+                        <h2>Cisco Switch</h2>
+                        <p class="muted">Site-specific Cisco switches, interface state, CRC problems and latest logs.</p>
+                    </div>
+                </div>
+                <div id="ciscoPanels" class="device-panels">
+                    <div class="empty-state">No Cisco switch data</div>
+                </div>
+            </section>
+
+            <section class="section-panel">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">AGGREGATION LAYER</p>
+                        <h2>NCS 540</h2>
+                        <p class="muted">Associated NCS devices are discovered by POP identity and checked with IOS-XR commands.</p>
+                    </div>
+                </div>
+                <div id="ncsPanels" class="device-panels">
+                    <div class="empty-state">No NCS data</div>
+                </div>
+            </section>
+
+            <section class="section-panel links-panel">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">TRANSMISSION NETWORK</p>
+                        <h2>Links</h2>
+                        <p class="muted">Only outgoing radio links originating from the entered Site Code are included.</p>
+                    </div>
+                </div>
+
+                <div class="link-type-section">
+                    <div class="link-type-heading">
+                        <h3>EBand Radios</h3>
+                        <span id="ebandStatus" class="status-pill status-unknown">UNKNOWN</span>
+                    </div>
+                    <div id="ebandLinks" class="table-wrap"></div>
+                </div>
+
+                <div class="link-type-section">
+                    <div class="link-type-heading">
+                        <h3>Huawei RTN Radios · Modulation</h3>
+                        <span id="rtnStatus" class="status-pill status-unknown">UNKNOWN</span>
+                    </div>
+                    <p class="table-note">Current modulation is compared with the maximum actual Zabbix value collected during the previous 12 hours.</p>
+                    <div id="rtnLinks" class="table-wrap"></div>
+                </div>
+
+                <div class="link-type-section">
+                    <div class="link-type-heading">
+                        <h3>Intracom Radios · Traffic</h3>
+                        <span id="intracomStatus" class="status-pill status-unknown">UNKNOWN</span>
+                    </div>
+                    <div id="intracomLinks" class="table-wrap"></div>
+                </div>
+
+                <div class="link-type-section">
+                    <div class="link-type-heading">
+                        <h3>NRay Radios · Traffic</h3>
+                        <span id="nrayStatus" class="status-pill status-unknown">UNKNOWN</span>
+                    </div>
+                    <div id="nrayLinks" class="table-wrap"></div>
+                </div>
+            </section>
+        </section>
     </main>
 
-    <footer>
-        POP Audit Platform
-    </footer>
-
+    <footer>POP Audit Platform · Zabbix-driven infrastructure verification</footer>
 </div>
-
 <script src="/static/app.js"></script>
-
 </body>
 </html>
