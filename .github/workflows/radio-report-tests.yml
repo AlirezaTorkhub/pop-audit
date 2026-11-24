@@ -1,0 +1,59 @@
+name: Radio and report unit tests
+
+on:
+  pull_request:
+    paths:
+      - "radio-service/**"
+      - "report-service/**"
+      - ".github/workflows/radio-report-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "radio-service/**"
+      - "report-service/**"
+      - ".github/workflows/radio-report-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  radio-analyzers:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: radio-service/requirements.txt
+
+      - name: Install radio dependencies
+        run: python -m pip install -r radio-service/requirements.txt
+
+      - name: Run radio unit tests
+        working-directory: radio-service
+        run: python -m unittest discover -s tests -v
+
+  report-builder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: report-service/requirements.txt
+
+      - name: Install report dependencies
+        run: python -m pip install -r report-service/requirements.txt
+
+      - name: Run report unit tests
+        working-directory: report-service
+        run: python -m unittest discover -s tests -v

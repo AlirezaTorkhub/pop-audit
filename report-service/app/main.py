@@ -1140,7 +1140,6 @@ def build_eband(
         "Capacity",
         "RX Modulation",
         "RX Health",
-        "Capacity Health",
         "Modulation Health",
         "Interface Status",
         "Overall Status",
@@ -1257,10 +1256,6 @@ def build_eband(
                     "rx_health",
                     {}
                 ).get("status"),
-                capacity.get(
-                    "health",
-                    {}
-                ).get("status"),
                 modulation.get(
                     "health",
                     {}
@@ -1289,7 +1284,6 @@ def build_eband(
             12,
             13,
             14,
-            15,
         ):
 
             style_status_cell(
