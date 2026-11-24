@@ -245,12 +245,12 @@ def extract_destination(
             return destination
 
     match = re.search(
-        r"\\b(?:TO|TOWARD|TOWARDS|FOR|DESTINATION)\\s+"
-        r"([A-Z][A-Z0-9]*(?:\\s+[A-Z][A-Z0-9]*){0,2})",
+        r"\b(?:TO|TOWARD|TOWARDS|FOR|DESTINATION)\s+"
+        r"([A-Z][A-Z0-9]*(?:\s+[A-Z][A-Z0-9]*){0,2})",
         upper,
     )
     if match:
-        candidate = re.sub(r"\\s+", " ", match.group(1)).strip()
+        candidate = re.sub(r"\s+", " ", match.group(1)).strip()
         return candidate or None
 
     return None
