@@ -21,7 +21,11 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest requests python-dotenv pydantic
+          python -m pip install pytest requests python-dotenv pydantic fastapi openpyxl netmiko paramiko
+
+      - name: Compile all Python services
+        run: |
+          python -m compileall -q             gateway orchestrator zabbix-service cisco-service             ericsson-service radio-service report-service tests
 
       - name: Run regression tests
         run: pytest -q
