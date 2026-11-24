@@ -159,6 +159,8 @@ function updateJobBadge(status) {
 }
 
 function resetResults() {
+    state.audit = null;
+    state.report = null;
     $("resultPanel").classList.add("hidden");
     $("componentStatusGrid").innerHTML = "";
     $("basebandGrid").innerHTML = "";
@@ -716,7 +718,7 @@ function renderTrafficTechnology(links, technology, containerId, statusId) {
                     <td>${escapeHtml(metric.direction || "—")}</td>
                     <td class="numeric">${numericCell(metric.value, metric.units || "")}</td>
                     <td>${escapeHtml(formatTimestamp(metric.timestamp))}</td>
-                    <td>${statusPill(metric.status || analysis.status || link.status)}</td>
+                    <td>${statusPill(analysis.status || metric.status || link.status)}</td>
                 </tr>
             `);
         });
