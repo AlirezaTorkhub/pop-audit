@@ -853,6 +853,9 @@ def audit_device(
         "hostname": hostname,
         "ip": ip,
         "zabbix_hostid": zabbix_hostid,
+        "device_type": device.get("device_type", "switch"),
+        "role": device.get("role", "primary_switch"),
+        "site_identity": device.get("site_identity"),
         "status": "UNKNOWN",
     }
 
