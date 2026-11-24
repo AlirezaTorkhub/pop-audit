@@ -676,12 +676,12 @@ def run_moshell_session(
 
         door_alarm_result = parse_alarm_category(
             alarm_result,
-            r"\\bdoor\\b|door.?open|cabinet.?door",
+            r"\bdoor\b|door.?open|cabinet.?door",
             "Door",
         )
         ac_alarm_result = parse_alarm_category(
             alarm_result,
-            r"\\bAC\\b|alternating current|rectifier|power supply|power system|mains|utility power",
+            r"\bAC\b|alternating current|rectifier|power supply|power system|mains|utility power",
             "AC",
         )
 
