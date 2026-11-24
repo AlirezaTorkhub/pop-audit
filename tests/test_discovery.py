@@ -4,6 +4,12 @@ import os
 import sys
 from pathlib import Path
 
+# Discovery unit tests use a fake Zabbix client; placeholders satisfy
+# the real client's constructor without making any network requests.
+os.environ.setdefault("ZABBIX_URL", "http://127.0.0.1")
+os.environ.setdefault("ZABBIX_USER", "unit-test")
+os.environ.setdefault("ZABBIX_PASSWORD", "unit-test")
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "zabbix-service"))
 
