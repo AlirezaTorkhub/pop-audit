@@ -743,7 +743,9 @@ def parse_logging(output: str, limit: int = 10) -> dict[str, Any]:
     )
     warning_count = severity_counts["WARNING"]
 
-    if critical_count > 0:
+    if not lines:
+        status = "NOT_AVAILABLE"
+    elif critical_count > 0:
         status = "CRITICAL"
     elif warning_count > 0:
         status = "WARNING"
@@ -1061,9 +1063,23 @@ def audit_device(
             interface_statuses
         )
 
+        crc_problems = [
+            {
+                "interface": item.get("interface"),
+                "description": item.get("description"),
+                "crc": item.get("crc"),
+                "status": "WARNING",
+            }
+            for item in interfaces
+            if item.get("crc") is not None and item.get("crc") > 0
+        ]
+
         logging_data = parse_logging(
-            logging_output
+            logging_output,
+            limit=10,
         )
+        if not logging_output.strip():
+            logging_data["status"] = "NOT_AVAILABLE"
 
         environment = parse_environment(
             command_outputs
@@ -1131,6 +1147,10 @@ def audit_device(
                     "status": interface_health,
                     "count": len(interfaces),
                     "data": interfaces,
+                    "problems": {
+                        "crc_count": len(crc_problems),
+                        "crc": crc_problems,
+                    },
                 },
                 "logging": logging_data,
                 "environment": environment,
@@ -1335,7 +1355,10 @@ def audit_ncs_device(device: dict[str, Any]) -> dict[str, Any]:
         ]
 
         logging_data = parse_logging(logging_output, limit=10)
-        if command_outputs.get("show logging last 10", {}).get("status") != "PASS":
+        if (
+            command_outputs.get("show logging last 10", {}).get("status") != "PASS"
+            or not logging_output.strip()
+        ):
             logging_data["status"] = "NOT_AVAILABLE"
 
         interface_status = aggregate_status([
