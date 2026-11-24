@@ -52,11 +52,11 @@ def evaluate_difference(
         return base_result(
             status="NOT_AVAILABLE",
             threshold=threshold,
-            operator="<=",
+            operator="<",
             reason="Difference value is not available.",
         )
 
-    if value <= threshold:
+    if value < threshold:
         return base_result(
             status="PASS",
             value=value,
