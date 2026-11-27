@@ -193,15 +193,41 @@ class AuditRunner:
             ]
             by_type[key] = self.aggregate_status(matching) if matching else "NOT_EXISTS"
 
+        discovery_errors = [str(value) for value in discovery.get("errors", [])]
+        switch_group_missing = any("Zabbix group not found" in value and "Switch" in value for value in discovery_errors)
+        radio_group_missing = any("Zabbix group not found" in value and "Radio" in value for value in discovery_errors)
+
+        if switches:
+            switch_status = self.aggregate_status([item.get("status", "UNKNOWN") for item in switches])
+        elif discovery.get("devices"):
+            switch_status = "UNKNOWN"
+        else:
+            switch_status = "NOT_AVAILABLE" if switch_group_missing else "NOT_EXISTS"
+
+        if ncs_results:
+            ncs_status = self.aggregate_status([item.get("status", "UNKNOWN") for item in ncs_results])
+        elif discovery.get("ncs_devices"):
+            ncs_status = discovery.get("ncs_status", "UNKNOWN")
+        else:
+            ncs_status = discovery.get("ncs_status", "NOT_EXISTS")
+
+        for radio_type, key in (
+            ("EBAND", "EBand"),
+            ("RTN", "Huawei RTN"),
+            ("INTRACOM", "Intracom"),
+            ("NRAY", "NRay"),
+        ):
+            if not any(
+                str(item.get("link_type") or item.get("type") or "").upper() == radio_type
+                for item in links
+            ) and radio_group_missing:
+                by_type[key] = "NOT_AVAILABLE"
+
         return {
-            "Cisco Switch": self.aggregate_status([
-                item.get("status", "UNKNOWN") for item in switches
-            ]) if switches else "NOT_EXISTS",
+            "Cisco Switch": switch_status,
             "BB1": bb_statuses.get("BB1", "NOT_EXISTS"),
             "BB2": bb_statuses.get("BB2", "NOT_EXISTS"),
-            "NCS 540": self.aggregate_status([
-                item.get("status", "UNKNOWN") for item in ncs_results
-            ]) if ncs_results else "NOT_EXISTS",
+            "NCS 540": ncs_status,
             "EBand": by_type["EBand"],
             "Huawei RTN": by_type["RTN"],
             "Intracom": by_type["Intracom"],
