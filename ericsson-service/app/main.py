@@ -274,24 +274,31 @@ def parse_cells(output: str) -> dict[str, Any]:
 def parse_alarms(output: str) -> dict[str, Any]:
     all_alarms: list[dict[str, Any]] = []
     alarm_pattern = re.compile(
-        r"^\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+([A-Za-z])\s+(.+?)\s+(?:([A-Za-z0-9]+=.*))?$"
+        r"^\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+([A-Za-z])\s+(.+?)\s*$"
     )
     for line in output.splitlines():
         match = alarm_pattern.match(line.strip())
         if not match:
             continue
-        timestamp, severity_code, remainder = (
-            match.group(1), match.group(2), match.group(3).strip()
+        timestamp = match.group(1)
+        severity_code = match.group(2)
+        remainder = match.group(3).strip()
+        mo_match = re.search(
+            r"\s{2,}([A-Za-z][A-Za-z0-9_]+=[^ ]+.*)$",
+            remainder,
         )
-        mo_match = re.search(r"\s{2,}([A-Za-z][A-Za-z0-9_]+=[^ ]+.*)$", remainder)
         if mo_match:
             problem = remainder[:mo_match.start()].strip()
             additional_text = mo_match.group(1).strip()
         else:
             problem = remainder
             additional_text = ""
+
         severity_map = {
-            "C": "CRITICAL", "M": "MAJOR", "m": "MINOR", "w": "WARNING",
+            "C": "CRITICAL",
+            "M": "MAJOR",
+            "m": "MINOR",
+            "w": "WARNING",
         }
         all_alarms.append({
             "timestamp": timestamp,
@@ -319,7 +326,9 @@ def parse_alarms(output: str) -> dict[str, Any]:
             " ".join((alarm["problem"], alarm["additional_text"], alarm["raw"]))
         )
     ]
-    relevant_critical = sum(alarm["severity"] == "CRITICAL" for alarm in relevant)
+    relevant_critical = sum(
+        alarm["severity"] == "CRITICAL" for alarm in relevant
+    )
     relevant_major = sum(
         alarm["severity"] in ("MAJOR", "MINOR", "WARNING")
         for alarm in relevant
@@ -345,6 +354,7 @@ def parse_alarms(output: str) -> dict[str, Any]:
         "relevant_alarms": relevant,
         "scope": "Door and AC/power/cooling/fan/battery/temperature alarms affect health.",
     }
+
 
 def parse_clock(
     output: str,
