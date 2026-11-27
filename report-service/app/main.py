@@ -610,7 +610,7 @@ def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
         "Radio Host", "Link / Destination", "Overall Status",
         "Modulation Status", "Difference Status", "Traffic Status",
         "Modulation Current", "Modulation Maximum", "History Samples",
-        "Current Timestamp", "Maximum Timestamp",
+        "Current Timestamp", "Maximum Timestamp", "Packet Loss", "Packet Loss Status",
     ])
     style_header(ws, 1)
     data = find_data(result)
@@ -644,6 +644,7 @@ def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
             ]
             latest = current_values[-1] if current_values else {}
             history = latest.get("history", {}) if isinstance(latest.get("history"), dict) else {}
+            packet_loss = analysis.get("packet_loss") or {}
             ws.append([
                 link.get("name"),
                 item.get("destination"),
@@ -656,6 +657,8 @@ def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
                 history.get("history_count"),
                 history.get("current_timestamp"),
                 history.get("max_timestamp"),
+                packet_loss.get("value"),
+                packet_loss.get("status"),
             ])
 
     style_body(ws, 2, ws.max_row, ws.max_column)
@@ -910,6 +913,9 @@ def build_links(wb: Workbook, result: dict[str, Any]) -> None:
             for field,label in (("modulation","Huawei Modulation"),("difference","RX/TX Difference"),("traffic","Traffic")):
                 for metric in analysis.get(field,[]) if isinstance(analysis.get(field),list) else []:
                     add_metric(label,metric)
+            packet_loss = analysis.get("packet_loss")
+            if isinstance(packet_loss, dict):
+                add_metric("Packet Loss", packet_loss)
         else:
             for metric in analysis.get("metrics",[]):
                 add_metric(radio_type+" Metric",metric)
