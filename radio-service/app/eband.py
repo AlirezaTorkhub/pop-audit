@@ -119,7 +119,11 @@ def analyze_eband(
             if slot == 1
             else "actualTxCapacity.110201"
         )
-        capacity_value = metric_value(items.get(capacity_key))
+        capacity_item = items.get(capacity_key)
+        capacity_value = metric_value(capacity_item)
+        slot_result["capacity_profile_input"] = metric_result(
+            capacity_item, f"Capacity profile input slot {slot}"
+        )
         modulation_key = (
             "actualRxAcmTC.110101"
             if slot == 1
