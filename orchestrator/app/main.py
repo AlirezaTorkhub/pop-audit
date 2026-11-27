@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -34,10 +35,10 @@ async def create_audit(
 
     site_code = request.site_code.strip()
 
-    if not site_code:
+    if not re.fullmatch(r"[0-9]{4}", site_code):
         raise HTTPException(
             status_code=400,
-            detail="Site code is required.",
+            detail="Site Code must contain exactly four digits.",
         )
 
     job_id = runner.create_job(
