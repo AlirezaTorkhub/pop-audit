@@ -181,3 +181,15 @@ def test_rtn_traffic_preserves_encoded_source_key_and_link_trigger():
     assert metric["units"] == "bps"
     assert metric["clock"] == 1700000100
     assert metric["trigger_health"]["status"] == "PASS"
+
+
+
+def test_non_finite_telemetry_never_becomes_a_healthy_verdict():
+    assert evaluate_rx_level(float("nan"))["status"] == "NOT_AVAILABLE"
+    assert evaluate_difference(float("inf"))["status"] == "NOT_AVAILABLE"
+    history_result = evaluate_modulation_history(
+        {"lastvalue": "NaN", "lastclock": "1700000100"},
+        [{"value": "Infinity", "clock": 1700000000}],
+        now=1700000100,
+    )
+    assert history_result["status"] == "NOT_AVAILABLE"
