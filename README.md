@@ -14,12 +14,12 @@ POP Audit discovers devices from Zabbix and performs read-only checks for Cisco 
 | Radio | `radio-service:8005` | EBand, Huawei RTN, Intracom, and NRay analysis |
 | Report | `report-service:8006` | Excel workbook generation and download |
 
-Only the Gateway publishes a host port. The default is `18000:8000`; change `POP_AUDIT_HOST_PORT` to select another port.
+The Compose file defines all seven services, including the required `orchestrator` service. The Gateway calls it over Docker DNS at `http://orchestrator:8001`; the Orchestrator calls the five backend services over their internal service names. Only the Gateway publishes a host port. The default is `18000:8000`; change `POP_AUDIT_HOST_PORT` to select another port.
 
 ## Deploy
 
 1. Copy `config/.env.example` to `config/.env` on the deployment host.
-2. Replace every `CHANGE_ME` value and the example Zabbix URL with the values for your environment.
+2. Replace every `CHANGE_ME` value and the example Zabbix URL with the values for your environment. `MOSHELL_PATH` is the path to the Moshell executable on `MOSHELL_HOST` (the remote SSH host), not a path inside the Docker container.
 3. Check the Zabbix group names. The defaults are:
    - `LTE-Backhaul-eNodeB`
    - `LTE-Backhaul-Switch`
@@ -37,7 +37,7 @@ docker compose logs --tail=100 gateway orchestrator zabbix-service cisco-service
 
 Open `http://<server-address>:<POP_AUDIT_HOST_PORT>`. The default host port is `18000`.
 
-Audit jobs are persisted in `./data/jobs.sqlite3`. Excel workbooks are persisted under `./reports`. Back up these directories as appropriate for your operational policy.
+Audit jobs are persisted by the Orchestrator alone in `./data/jobs.sqlite3` (the Gateway does not mount or open the SQLite database). Excel workbooks are persisted under `./reports`. Back up these directories as appropriate for your operational policy.
 
 ## Discovery and matching
 
