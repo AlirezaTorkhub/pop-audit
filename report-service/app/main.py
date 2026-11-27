@@ -669,7 +669,7 @@ def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
 
 def build_eband(wb: Workbook, result: dict[str, Any]) -> None:
     ws = wb.create_sheet("EBand")
-    ws.append(["Radio Host","Zabbix Host ID","Slot","RX","RX Units","TX","TX Units","RX Calloff","TX Calloff","Calculated Difference","Difference Status","RX Status","RX Modulation","Modulation Status","Interface Status","Overall Status"])
+    ws.append(["Radio Host","Zabbix Host ID","Slot","RX","RX Units","TX","TX Units","RX Calloff","TX Calloff","Calculated Difference","Difference Status","RX Status","RX Modulation","Modulation Status","Capacity Profile Input","Capacity Units","Interface Status","Overall Status"])
     style_header(ws, 1)
     data = find_data(result)
     for link in data.get("links", []):
@@ -681,10 +681,10 @@ def build_eband(wb: Workbook, result: dict[str, Any]) -> None:
             rx, tx = slot.get("rx", {}), slot.get("tx", {})
             modulation = slot.get("rx_modulation", {})
             diff = slot.get("difference", {})
-            ws.append([link.get("name"),link.get("zabbix_hostid"),slot.get("slot"),rx.get("value"),rx.get("units"),tx.get("value"),tx.get("units"),slot.get("rx_calloff", {}).get("value"),slot.get("tx_calloff", {}).get("value"),diff.get("value"),diff.get("status"),slot.get("rx_health", {}).get("status"),modulation.get("metric", {}).get("value"),modulation.get("health", {}).get("status"),checks.get("interfaces", {}).get("status"),analysis.get("status")])
+            ws.append([link.get("name"),link.get("zabbix_hostid"),slot.get("slot"),rx.get("value"),rx.get("units"),tx.get("value"),tx.get("units"),slot.get("rx_calloff", {}).get("value"),slot.get("tx_calloff", {}).get("value"),diff.get("value"),diff.get("status"),slot.get("rx_health", {}).get("status"),modulation.get("metric", {}).get("value"),modulation.get("health", {}).get("status"),slot.get("capacity_profile_input", {}).get("value"),slot.get("capacity_profile_input", {}).get("units"),checks.get("interfaces", {}).get("status"),analysis.get("status")])
     style_body(ws, 2, ws.max_row, ws.max_column)
     for row in ws.iter_rows(min_row=2):
-        for index in (11,12,14,15,16):
+        for index in (11,12,14,16,17,18):
             style_status_cell(row[index-1])
     ws.freeze_panes = "A2"
     auto_width(ws)
@@ -899,7 +899,7 @@ def build_links(wb: Workbook, result: dict[str, Any]) -> None:
             checks=analysis.get("checks",{})
             for slot in checks.get("difference",{}).get("slots",[]):
                 ix=slot.get("slot")
-                for field in ("rx","tx","rx_calloff","tx_calloff","zabbix_difference"):
+                for field in ("rx","tx","rx_calloff","tx_calloff","zabbix_difference","capacity_profile_input"):
                     add_metric(f"Slot {ix} {field.upper()}",slot.get(field,{}))
                 diff=slot.get("difference",{})
                 add_metric(f"Slot {ix} Difference",{"value":diff.get("value"),"units":"dB","status":diff.get("status"),"reason":diff.get("reason")})
