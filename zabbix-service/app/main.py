@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
@@ -65,9 +67,11 @@ def debug_groups():
         client.login()
 
         groups = [
-            "LTE-Backhaul-eNodeB",
-            "LTE-Backhaul-Switch",
-            "LTE-Backhaul-Radio",
+            os.getenv("ZABBIX_GROUP_ENODEB", "LTE-Backhaul-eNodeB"),
+            os.getenv("ZABBIX_GROUP_SWITCH", "LTE-Backhaul-Switch"),
+            os.getenv("ZABBIX_GROUP_SWITCH_AGGREGATION", "LTE-Backhaul-Switch-Aggregation"),
+            os.getenv("ZABBIX_GROUP_RADIO", "LTE-Backhaul-Radio"),
+            os.getenv("ZABBIX_GROUP_RADIO_HUAWEI", "LTE-Backhaul-Radio-Huawei"),
         ]
 
         output = {}
