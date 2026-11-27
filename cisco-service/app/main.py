@@ -114,13 +114,18 @@ def normalize_interface_name(value: Any) -> str:
     """Canonicalize IOS abbreviations and long interface names for joins."""
     token = re.sub(r"[^a-z0-9]", "", str(value or "").lower())
     aliases = (
+        ("fourhundredgigabitethernet", "fh"),
+        ("fourhundredgige", "fh"),
+        ("hundredgigabitethernet", "hu"),
+        ("hundredgige", "hu"),
+        ("fortygigabitethernet", "fo"),
+        ("fortygige", "fo"),
+        ("twentyfivegigabitethernet", "tw"),
+        ("twentyfivegige", "tw"),
         ("tengigabitethernet", "te"),
         ("tengige", "te"),
         ("gigabitethernet", "gi"),
         ("fastethernet", "fa"),
-        ("hundredgigabitethernet", "hu"),
-        ("fortygigabitethernet", "fo"),
-        ("twentyfivegigabitethernet", "tw"),
         ("portchannel", "po"),
         ("loopback", "lo"),
         ("managementethernet", "mgmt"),
