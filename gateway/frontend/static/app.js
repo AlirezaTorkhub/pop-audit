@@ -815,9 +815,9 @@ async function startAudit() {
 
     const siteCode = input.value.trim();
 
-    if (!siteCode) {
+    if (!/^[0-9]{4}$/.test(siteCode)) {
         setFormMessage(
-            "Enter a Site Code.",
+            "Enter a four-digit Site Code, for example 2488.",
             true
         );
         input.focus();
