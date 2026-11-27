@@ -6,6 +6,7 @@ const state = {
     timer: null,
     audit: null,
     report: null,
+    jobStatus: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -178,6 +179,7 @@ function setProgress(status) {
 
 function updateJobBadge(status) {
     const normalized = String(status || "UNKNOWN").toUpperCase();
+    state.jobStatus = normalized;
     const className = statusClass(normalized);
 
     const badgeElement = $("jobStatusBadge");
@@ -865,10 +867,12 @@ async function startAudit() {
 
         await pollAudit();
 
-        state.timer = setInterval(
-            pollAudit,
-            2500
-        );
+        if (!["COMPLETED", "FAILED"].includes(state.jobStatus)) {
+            state.timer = setInterval(
+                pollAudit,
+                2500
+            );
+        }
 
     } catch (error) {
         setFormMessage(
