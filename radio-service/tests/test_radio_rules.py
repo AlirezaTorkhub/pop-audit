@@ -151,3 +151,33 @@ def test_rtn_packet_loss_metric_and_existing_thresholds_are_preserved():
     assert result["packet_loss"]["value"] == 6
     assert result["packet_loss"]["units"] == "%"
     assert result["packet_loss"]["status"] == "WARNING"
+
+
+
+def test_rtn_traffic_preserves_encoded_source_key_and_link_trigger():
+    item = {
+        "itemid": "301",
+        "name": "RX Traffic",
+        "key_": "rx_traffic[26.97.116.1]",
+        "value_type": "3",
+        "units": "bps",
+        "lastvalue": "987654",
+        "lastclock": "1700000100",
+    }
+    trigger = {
+        "triggerid": "t301",
+        "description": "Traffic from remote POP",
+        "expression": "{301.last()}>1000000",
+        "priority": "2",
+        "status": "0",
+        "value": "0",
+        "items": [{"itemid": "301"}],
+    }
+    result = analyze_rtn([item], [trigger])
+    metric = result["traffic"][0]
+    assert metric["source"] == "26.97.116.1"
+    assert metric["decoded_source"]
+    assert metric["value"] == 987654
+    assert metric["units"] == "bps"
+    assert metric["clock"] == 1700000100
+    assert metric["trigger_health"]["status"] == "PASS"
