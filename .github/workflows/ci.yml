@@ -96,8 +96,8 @@ jobs:
 
           gateway = services["gateway"]
           orchestrator = services["orchestrator"]
-          assert gateway["build"]["context"] == "./gateway"
-          assert orchestrator["build"]["context"] == "./orchestrator"
+          assert gateway["build"]["context"].rstrip("/").endswith("/gateway") or gateway["build"]["context"] == "./gateway"
+          assert orchestrator["build"]["context"].rstrip("/").endswith("/orchestrator") or orchestrator["build"]["context"] == "./orchestrator"
           assert gateway["environment"]["ORCHESTRATOR_URL"] == "http://orchestrator:8001"
           assert gateway["environment"]["REPORT_SERVICE_URL"] == "http://report-service:8006"
           assert gateway["depends_on"]["orchestrator"]["condition"] == "service_healthy"
@@ -130,6 +130,10 @@ jobs:
               mount.get("target") == "/opt/pop-audit/data"
               for mount in orchestrator.get("volumes", [])
           ), "Orchestrator SQLite data volume is missing"
+          assert not any(
+              mount.get("target") == "/opt/pop-audit/data"
+              for mount in gateway.get("volumes", [])
+          ), "Gateway must not mount or share the Orchestrator SQLite database"
           assert any(
               mount.get("target") == "/opt/pop-audit/reports"
               for mount in services["report-service"].get("volumes", [])
@@ -138,6 +142,10 @@ jobs:
               tuple(networks) if isinstance(networks, list) else tuple(networks.keys())
               for networks in (service.get("networks", {}) for service in services.values())
           }) == 1, "Services do not share the expected internal network"
+          assert config["networks"]["pop-audit-internal"]["driver"] == "bridge"
+          assert all(service.get("restart") == "unless-stopped" for service in services.values())
+          assert services["ericsson-service"]["environment"]["MOSHELL_PATH"].endswith("/moshell")
+
           print("Compose graph verified: seven services; Orchestrator is present, reachable and persistent.")
           PY
       - name: Build all service images
