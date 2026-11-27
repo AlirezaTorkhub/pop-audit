@@ -869,73 +869,61 @@ def audit_device(
             interfaces_detail_output
         )
 
-        # Merge interface data.
+        # Merge the union of status, description and detail output so
+        # interfaces are not lost when one parser does not emit a row.
+        status_by_name = {
+            item.get("interface"): item
+            for item in interface_status
+            if item.get("interface")
+        }
         detail_by_name = {
-            item["interface"]: item
+            item.get("interface"): item
             for item in interface_details
             if item.get("interface")
         }
+        interface_names = list(dict.fromkeys(
+            list(status_by_name.keys())
+            + list(descriptions.keys())
+            + list(detail_by_name.keys())
+        ))
 
         interfaces: list[dict[str, Any]] = []
-
-        for item in interface_status:
-
-            name = item["interface"]
-
+        for name in interface_names:
+            status_item = status_by_name.get(name, {})
+            detail = detail_by_name.get(name, {})
+            raw_state = status_item.get("status_raw") or detail.get("line_state") or "unknown"
             merged = {
-                **item,
+                **status_item,
+                "interface": name,
+                "status_raw": raw_state,
                 "description": descriptions.get(
                     name,
-                    item.get("name", ""),
+                    status_item.get("name", detail.get("description", "")),
                 ),
+                "line_state": detail.get("line_state"),
+                "protocol": detail.get("protocol"),
+                "crc": detail.get("crc"),
+                "input_errors": detail.get("input_errors"),
+                "output_errors": detail.get("output_errors"),
+                "output_drops": detail.get("output_drops"),
+                "carrier_transitions": detail.get("carrier_transitions"),
+                "bandwidth_kbps": detail.get("bandwidth_kbps"),
             }
+            classified = classify_interface(merged)
+            speed = str(status_item.get("speed") or "")
+            expected_speed = is_expected_speed(name, speed)
+            if raw_state.lower() in {"connected", "up"} and expected_speed is False:
+                classified["health"] = aggregate_status([classified["health"], "WARNING"])
+                classified["health_reason"] += " Gigabit/10-Gigabit interface is operating below its expected link speed."
+            interfaces.append(classified)
 
-            detail = detail_by_name.get(name)
-
-            if detail:
-                merged.update(
-                    {
-                        "line_state": detail.get(
-                            "line_state"
-                        ),
-                        "protocol": detail.get(
-                            "protocol"
-                        ),
-                        "crc": detail.get(
-                            "crc",
-                            0,
-                        ),
-                        "input_errors": detail.get(
-                            "input_errors",
-                            0,
-                        ),
-                        "output_errors": detail.get(
-                            "output_errors",
-                            0,
-                        ),
-                        "output_drops": detail.get(
-                            "output_drops",
-                            0,
-                        ),
-                        "carrier_transitions": detail.get(
-                            "carrier_transitions",
-                            0,
-                        ),
-                        "bandwidth_kbps": detail.get(
-                            "bandwidth_kbps"
-                        ),
-                    }
-                )
-
-            interfaces.append(
-                classify_interface(merged)
-            )
-
-        # Any interface with CRC / serious errors becomes WARNING.
+        # Only measured positive counters become problems. Missing counters
+        # stay null and are never silently converted to healthy zero values.
+        crc_problems = []
         for item in interfaces:
-            crc = item.get("crc", 0) or 0
-            input_errors = item.get("input_errors", 0) or 0
-            output_errors = item.get("output_errors", 0) or 0
+            crc = item.get("crc")
+            input_errors = item.get("input_errors")
+            output_errors = item.get("output_errors")
 
             if crc > 0:
                 item["health"] = aggregate_status(
@@ -951,8 +939,18 @@ def audit_device(
                 item["health_reason"] += (
                     f" CRC errors detected: {crc}."
                 )
+                crc_problems.append({
+                    "hostname": hostname,
+                    "interface": item.get("interface"),
+                    "crc": crc,
+                    "description": item.get("description"),
+                })
 
-            if input_errors > 0 or output_errors > 0:
+            if (
+                isinstance(input_errors, (int, float)) and input_errors > 0
+            ) or (
+                isinstance(output_errors, (int, float)) and output_errors > 0
+            ):
                 item["health"] = aggregate_status(
                     [
                         item.get(
@@ -1047,6 +1045,7 @@ def audit_device(
                     "count": len(interfaces),
                     "data": interfaces,
                 },
+                "crc_problems": crc_problems,
                 "logging": logging_data,
                 "environment": environment,
             },
