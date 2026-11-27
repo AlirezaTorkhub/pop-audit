@@ -73,3 +73,10 @@ def test_ncs_uses_ios_xr_specific_commands(monkeypatch):
     assert "show interfaces" in fake.commands
     assert "show logging last 10" in fake.commands
     assert "show interfaces status" not in fake.commands
+
+
+
+def test_ios_short_and_full_interface_names_share_the_same_join_key():
+    assert cisco.normalize_interface_name("Gi1/0/1") == cisco.normalize_interface_name("GigabitEthernet1/0/1")
+    assert cisco.normalize_interface_name("Te1/0/1") == cisco.normalize_interface_name("TenGigabitEthernet1/0/1")
+    assert cisco.normalize_interface_name("Po10") == cisco.normalize_interface_name("Port-channel10")
