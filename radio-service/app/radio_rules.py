@@ -4,10 +4,14 @@ from typing import Any, Optional
 
 
 def to_float(value: Any) -> Optional[float]:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
+    import math
+    if value is None:
         return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def base_result(
