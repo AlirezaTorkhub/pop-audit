@@ -894,6 +894,13 @@ def audit_device(
             status_item = status_by_name.get(name, {})
             detail = detail_by_name.get(name, {})
             raw_state = status_item.get("status_raw") or detail.get("line_state") or "unknown"
+            raw_state_lower = str(raw_state).strip().lower()
+            if raw_state_lower.startswith("administratively down") or raw_state_lower == "admin down":
+                raw_state = "disabled"
+            elif raw_state_lower.startswith("up"):
+                raw_state = "up"
+            elif raw_state_lower.startswith("down"):
+                raw_state = "down"
             merged = {
                 **status_item,
                 "interface": name,
