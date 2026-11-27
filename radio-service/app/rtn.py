@@ -341,9 +341,15 @@ def _traffic_records(
             continue
         metric = _metric(item)
         related = trigger_index.get(metric["itemid"], [])
+        parameter_match = re.search(r"\[(.*)\]", key)
+        source = parameter_match.group(1).strip() if parameter_match else None
+        decoded_source = decode_zabbix_encoded(source) if source else None
         metric.update({
             "direction": direction,
+            "source": source,
+            "decoded_source": decoded_source,
             "link": _item_link_name(item, related),
+            "destination": _item_link_name(item, related),
             "trigger_health": _trigger_summary(related),
         })
         # Do not invent a traffic threshold: only enabled Zabbix triggers
