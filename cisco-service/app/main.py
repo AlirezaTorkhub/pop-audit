@@ -130,14 +130,14 @@ def status_result(
 # SSH / Netmiko
 # ============================================================
 
-def connect_device(ip: str):
+def connect_device(ip: str, device_type: str = "cisco_ios"):
     if not SSH_USERNAME or not SSH_PASSWORD:
         raise RuntimeError(
             "SSH_USERNAME or SSH_PASSWORD is not configured."
         )
 
     device = {
-        "device_type": "cisco_ios",
+        "device_type": device_type,
         "host": ip,
         "username": SSH_USERNAME,
         "password": SSH_PASSWORD,
@@ -411,36 +411,12 @@ def parse_interfaces_detail(
                     if duplex_match
                     else None
                 ),
-                "input_errors": (
-                    int(input_errors_match.group(1))
-                    if input_errors_match
-                    else 0
-                ),
-                "crc": (
-                    int(crc_match.group(1))
-                    if crc_match
-                    else 0
-                ),
-                "output_errors": (
-                    int(output_errors_match.group(1))
-                    if output_errors_match
-                    else 0
-                ),
-                "output_drops": (
-                    int(output_discards_match.group(1))
-                    if output_discards_match
-                    else 0
-                ),
-                "input_queue_drops": (
-                    int(input_discards_match.group(1))
-                    if input_discards_match
-                    else 0
-                ),
-                "carrier_transitions": (
-                    int(carrier_transitions_match.group(1))
-                    if carrier_transitions_match
-                    else 0
-                ),
+                "input_errors": int(input_errors_match.group(1)) if input_errors_match else None,
+                "crc": int(crc_match.group(1)) if crc_match else None,
+                "output_errors": int(output_errors_match.group(1)) if output_errors_match else None,
+                "output_drops": int(output_discards_match.group(1)) if output_discards_match else None,
+                "input_queue_drops": int(input_discards_match.group(1)) if input_discards_match else None,
+                "carrier_transitions": int(carrier_transitions_match.group(1)) if carrier_transitions_match else None,
                 "raw": block,
             }
         )
@@ -521,21 +497,13 @@ def classify_interface(
             "Interface is operational."
         )
 
-    elif state in {
-        "disabled",
-        "err-disabled",
-        "suspended",
-        "inactive",
-    }:
+    elif state == "disabled":
         result["health"] = "PASS"
         result["health_reason"] = (
             "Interface is administratively or intentionally inactive."
         )
 
-    elif state in {
-        "notconnect",
-        "down",
-    }:
+    elif state in {"notconnect", "down", "err-disabled", "suspended", "inactive"}:
         result["health"] = "WARNING"
         result["health_reason"] = (
             "Interface is not connected/up."
@@ -685,75 +653,41 @@ def parse_inventory(output: str) -> list[dict[str, Any]]:
 # Logging
 # ============================================================
 
-def parse_logging(output: str) -> dict[str, Any]:
-
-    lines = [
-        line.rstrip()
-        for line in output.splitlines()
-        if line.strip()
+def parse_logging(output: str, recent_limit: int = 10) -> dict[str, Any]:
+    lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+    meaningful = [
+        line for line in lines
+        if re.search(r"%[A-Z0-9_-]+-\d+-", line)
+        or re.match(r"^\*?\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}", line)
+        or re.search(r"\b(?:EMERG|ALERT|CRIT|ERROR|WARN|NOTICE|INFO)\b", line, re.I)
     ]
-
-    recent = lines[-20:]
-
+    recent = (meaningful or lines)[-recent_limit:]
     severity_counts = {
-        "EMERGENCY": 0,
-        "ALERT": 0,
-        "CRITICAL": 0,
-        "ERROR": 0,
-        "WARNING": 0,
-        "NOTICE": 0,
-        "INFO": 0,
-        "DEBUG": 0,
+        "EMERGENCY": 0, "ALERT": 0, "CRITICAL": 0, "ERROR": 0,
+        "WARNING": 0, "NOTICE": 0, "INFO": 0, "DEBUG": 0,
     }
-
     severity_patterns = {
-        0: "EMERGENCY",
-        1: "ALERT",
-        2: "CRITICAL",
-        3: "ERROR",
-        4: "WARNING",
-        5: "NOTICE",
-        6: "INFO",
-        7: "DEBUG",
+        0: "EMERGENCY", 1: "ALERT", 2: "CRITICAL", 3: "ERROR",
+        4: "WARNING", 5: "NOTICE", 6: "INFO", 7: "DEBUG",
     }
-
     for line in lines:
+        match = re.search(r"%[A-Z0-9_-]+-(\d+)-", line)
+        if match:
+            severity = severity_patterns.get(int(match.group(1)))
+            if severity:
+                severity_counts[severity] += 1
 
-        match = re.search(
-            r"%[A-Z0-9_-]+-(\d+)-",
-            line,
-        )
-
-        if not match:
-            continue
-
-        level = int(match.group(1))
-
-        severity = severity_patterns.get(level)
-
-        if severity:
-            severity_counts[severity] += 1
-
-    critical_count = (
-        severity_counts["EMERGENCY"]
-        + severity_counts["ALERT"]
-        + severity_counts["CRITICAL"]
-        + severity_counts["ERROR"]
+    critical_count = sum(
+        severity_counts[key] for key in ("EMERGENCY", "ALERT", "CRITICAL", "ERROR")
     )
-
     warning_count = severity_counts["WARNING"]
-
-    if critical_count > 0:
-        status = "WARNING"
-    elif warning_count > 0:
-        status = "PASS"
-    else:
-        status = "PASS"
-
+    status = "CRITICAL" if critical_count else ("WARNING" if warning_count else "PASS")
     return {
         "status": status,
         "severity_counts": severity_counts,
-        "recent_20": recent,
+        "recent_10": recent,
+        "recent_count": len(recent),
+        "meaningful_event_count": len(meaningful),
     }
 
 
@@ -761,59 +695,47 @@ def parse_logging(output: str) -> dict[str, Any]:
 # Environment
 # ============================================================
 
-def parse_environment(
-    command_outputs: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-
-    selected = None
-
-    for key in (
-        "show environment",
-        "show env temperature status",
-        "show environment status",
+def parse_environment(command_outputs: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    candidates = (
+        "show environment temp status",
+        "show environment temp status",
+    "show env temperature status",
         "show environment summary",
-    ):
+        "show environment status",
+        "show environment",
+    )
+    selected = None
+    for key in candidates:
         result = command_outputs.get(key)
-
-        if result and result.get("output"):
-            selected = result
-            break
-
+        raw = str((result or {}).get("output") or "")
+        if not result or result.get("status") != "PASS" or not raw.strip():
+            continue
+        if re.search(r"%\s*Invalid input|Invalid command|Unrecognized command|Unknown command", raw, re.I):
+            continue
+        selected = result
+        break
     if not selected:
         return {
             "status": "NOT_AVAILABLE",
-            "message": (
-                "No supported environment command returned data."
-            ),
-            "raw": {},
+            "message": "No supported environment command returned usable data.",
+            "raw": "",
         }
-
     raw = selected.get("output", "")
-
-    critical_terms = re.findall(
-        r"\b(?:failed|fail|critical|shutdown|alarm)\b",
-        raw,
-        re.IGNORECASE,
-    )
-
-    warning_terms = re.findall(
-        r"\b(?:warning|alert|overheat|high)\b",
-        raw,
-        re.IGNORECASE,
-    )
-
-    if critical_terms:
-        status = "CRITICAL"
-    elif warning_terms:
-        status = "WARNING"
-    else:
-        status = "PASS"
-
+    critical_lines = [
+        line.strip() for line in raw.splitlines()
+        if re.search(r"\b(?:failed|fail|critical|shutdown|alarm|not ok)\b", line, re.I)
+        and not re.search(r"\bno alarms?\b", line, re.I)
+    ]
+    warning_lines = [
+        line.strip() for line in raw.splitlines()
+        if re.search(r"\b(?:warning|alert|overheat|too high|too low)\b", line, re.I)
+    ]
+    status = "CRITICAL" if critical_lines else ("WARNING" if warning_lines else "PASS")
     return {
         "status": status,
         "command": selected.get("command"),
-        "critical_terms": critical_terms,
-        "warning_terms": warning_terms,
+        "critical_terms": critical_lines,
+        "warning_terms": warning_lines,
         "raw": raw,
     }
 
@@ -1167,6 +1089,133 @@ def audit_device(
                 pass
 
 
+
+# ============================================================
+# Cisco NCS 540 (IOS XR) profile
+# ============================================================
+
+def audit_ncs_device(device: dict[str, Any]) -> dict[str, Any]:
+    hostname = device.get("hostname")
+    ip = device.get("ip")
+    hostid = device.get("zabbix_hostid")
+    base = {
+        "hostname": hostname,
+        "ip": ip,
+        "zabbix_hostid": hostid,
+        "device_type": "ncs540",
+        "platform": "cisco_xr",
+        "status": "UNKNOWN",
+    }
+    if not ip:
+        return {**base, "status": "NOT_AVAILABLE", "message": "NCS 540 has no management IP."}
+
+    connection = None
+    outputs: dict[str, dict[str, Any]] = {}
+    commands = (
+        "show interfaces description",
+        "show interfaces",
+        "show logging last 10",
+    )
+    try:
+        connection = connect_device(ip, "cisco_xr")
+        try:
+            connection.send_command("terminal length 0", read_timeout=SSH_COMMAND_TIMEOUT)
+        except Exception:
+            pass
+        for command in commands:
+            outputs[command] = run_command(connection, command)
+
+        desc_output = outputs["show interfaces description"].get("output", "")
+        detail_output = outputs["show interfaces"].get("output", "")
+        log_output = outputs["show logging last 10"].get("output", "")
+        descriptions = parse_interface_description(desc_output)
+        details = parse_interfaces_detail(detail_output)
+        by_name = {
+            item.get("interface"): item
+            for item in details
+            if item.get("interface")
+        }
+        names = list(dict.fromkeys(
+            list(descriptions.keys()) + list(by_name.keys())
+        ))
+        interfaces = []
+        for name in names:
+            detail = by_name.get(name, {})
+            raw_state = str(detail.get("line_state") or "").lower()
+            protocol = str(detail.get("protocol") or "").lower()
+            status_raw = "up" if raw_state == "up" and protocol in ("up", "") else (
+                "down" if raw_state else "unknown"
+            )
+            merged = {
+                "interface": name,
+                "description": descriptions.get(name, detail.get("description", "")),
+                "status_raw": status_raw,
+                "line_state": detail.get("line_state"),
+                "protocol": detail.get("protocol"),
+                "crc": detail.get("crc"),
+                "input_errors": detail.get("input_errors"),
+                "output_errors": detail.get("output_errors"),
+                "output_drops": detail.get("output_drops"),
+                "bandwidth_kbps": detail.get("bandwidth_kbps"),
+                "raw": detail.get("raw", ""),
+            }
+            classified = classify_interface(merged)
+            crc = classified.get("crc")
+            if isinstance(crc, int) and crc > 0:
+                classified["health"] = aggregate_status([classified["health"], "WARNING"])
+                classified["health_reason"] += f" CRC errors detected: {crc}."
+            expected = is_expected_speed(name, str(detail.get("speed") or detail.get("bandwidth_kbps") or ""))
+            if status_raw == "up" and expected is False:
+                classified["health"] = aggregate_status([classified["health"], "WARNING"])
+                classified["health_reason"] += " Negotiated speed is below the interface family expectation."
+            interfaces.append(classified)
+
+        interface_status = aggregate_status(
+            [item["health"] for item in interfaces]
+        ) if interfaces else "UNKNOWN"
+        logging_data = parse_logging(log_output, recent_limit=10)
+        if not interfaces and not log_output.strip():
+            overall = "UNKNOWN"
+        else:
+            overall = aggregate_status([interface_status, logging_data["status"]])
+        crc_problems = [
+            {
+                "hostname": hostname,
+                "interface": item.get("interface"),
+                "crc": item.get("crc"),
+                "description": item.get("description"),
+            }
+            for item in interfaces
+            if isinstance(item.get("crc"), int) and item["crc"] > 0
+        ]
+        return {
+            **base,
+            "status": overall,
+            "checks": {
+                "connectivity": status_result("PASS", "NCS 540 IOS XR SSH session established."),
+                "interfaces": {
+                    "status": interface_status,
+                    "count": len(interfaces),
+                    "data": interfaces,
+                },
+                "crc_problems": crc_problems,
+                "logging": logging_data,
+            },
+            "raw_commands": outputs,
+        }
+    except NetmikoAuthenticationException as exc:
+        return {**base, "status": "CRITICAL", "message": "NCS 540 SSH authentication failed.", "error": str(exc)}
+    except NetmikoTimeoutException as exc:
+        return {**base, "status": "CRITICAL", "message": "NCS 540 SSH connection timed out.", "error": str(exc)}
+    except Exception as exc:
+        return {**base, "status": "UNKNOWN", "message": "NCS 540 IOS XR check failed.", "error": str(exc)}
+    finally:
+        if connection:
+            try:
+                connection.disconnect()
+            except Exception:
+                pass
+
 # ============================================================
 # API
 # ============================================================
@@ -1181,53 +1230,44 @@ def health():
 
 @app.post("/check")
 def check(payload: dict):
+    devices = payload.get("devices", [])
+    ncs_devices = payload.get("ncs_devices", [])
 
-    devices = payload.get(
-        "devices",
-        [],
-    )
-
-    if not isinstance(devices, list):
+    if not isinstance(devices, list) or not isinstance(ncs_devices, list):
         return {
             "service": "cisco",
-            "site_code": payload.get(
-                "site_code"
-            ),
+            "site_code": payload.get("site_code"),
             "status": "UNKNOWN",
             "results": [],
-            "error": "devices must be a list",
+            "switches": [],
+            "ncs_devices": [],
+            "error": "devices and ncs_devices must be lists",
         }
 
-    results = []
-
+    switches = []
     for device in devices:
-
         if not isinstance(device, dict):
-            results.append({
-                "status": "UNKNOWN",
-                "message": "Invalid device payload.",
-            })
-            continue
+            switches.append({"status": "UNKNOWN", "message": "Invalid device payload."})
+        else:
+            switches.append(audit_device(device))
 
-        results.append(
-            audit_device(device)
-        )
+    ncs_results = []
+    for device in ncs_devices:
+        if not isinstance(device, dict):
+            ncs_results.append({"status": "UNKNOWN", "message": "Invalid NCS payload."})
+        else:
+            ncs_results.append(audit_ncs_device(device))
 
-    overall = aggregate_status(
-        [
-            item.get(
-                "status",
-                "UNKNOWN",
-            )
-            for item in results
-        ]
-    )
+    all_results = switches + ncs_results
+    overall = aggregate_status([
+        item.get("status", "UNKNOWN") for item in all_results
+    ]) if all_results else "UNKNOWN"
 
     return {
         "service": "cisco",
-        "site_code": payload.get(
-            "site_code"
-        ),
+        "site_code": payload.get("site_code"),
         "status": overall,
-        "results": results,
+        "results": all_results,
+        "switches": switches,
+        "ncs_devices": ncs_results,
     }
