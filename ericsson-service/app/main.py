@@ -227,57 +227,27 @@ def parse_lt_all(
     return result
 
 
-def parse_cells(
-    output: str,
-) -> dict[str, Any]:
-
+def parse_cells(output: str) -> dict[str, Any]:
     cells: list[dict[str, Any]] = []
-
     pattern = re.compile(
-        r"^\s*(\d+)\s+"
-        r"(\d+)\s+\(([^)]+)\)\s+"
-        r"(\d+)\s+\(([^)]+)\)\s+"
-        r"(.+?)\s*$"
+        r"^\s*(\d+)\s+(\d+)\s+\(([^)]+)\)\s+(\d+)\s+\(([^)]+)\)\s+(.+?)\s*$"
     )
-
     for line in output.splitlines():
-
-        match = pattern.match(
-            line
-        )
-
+        match = pattern.match(line)
         if not match:
             continue
-
-        proxy = int(
-            match.group(1)
-        )
-
-        adm_value = int(
-            match.group(2)
-        )
-
+        proxy = int(match.group(1))
+        adm_value = int(match.group(2))
         adm_state = match.group(3).strip()
-
-        op_value = int(
-            match.group(4)
-        )
-
+        op_value = int(match.group(4))
         op_state = match.group(5).strip()
-
         mo = match.group(6).strip()
-
         cell_status = (
             "PASS"
-            if (
-                adm_value == 1
-                and adm_state.upper() == "UNLOCKED"
-                and op_value == 1
-                and op_state.upper() == "ENABLED"
-            )
+            if adm_value == 1 and adm_state.upper() == "UNLOCKED"
+            and op_value == 1 and op_state.upper() == "ENABLED"
             else "WARNING"
         )
-
         cells.append({
             "proxy": proxy,
             "admin_value": adm_value,
@@ -287,138 +257,93 @@ def parse_cells(
             "mo": mo,
             "status": cell_status,
         })
-
     if not cells:
         return {
-            "status": "NOT_AVAILABLE",
+            "status": "UNKNOWN",
             "count": 0,
             "cells": [],
+            "reason": "No parseable cell rows were returned by st cel.",
         }
-
     return {
-        "status": aggregate_status(
-            [
-                cell["status"]
-                for cell in cells
-            ]
-        ),
+        "status": aggregate_status([cell["status"] for cell in cells]),
         "count": len(cells),
         "cells": cells,
     }
 
-
-def parse_alarms(
-    output: str,
-) -> dict[str, Any]:
-
-    alarms: list[dict[str, Any]] = []
-
-    # Example:
-    #
-    # 2026-09-01 ... C License Key File Fault ...
-    # 2026-09-05 ... w License Usage ...
-    # 2026-09-15 ... m External Link Failure ...
-
+def parse_alarms(output: str) -> dict[str, Any]:
+    all_alarms: list[dict[str, Any]] = []
     alarm_pattern = re.compile(
-        r"^\s*"
-        r"(\d{4}-\d{2}-\d{2}\s+"
-        r"\d{2}:\d{2}:\d{2})\s+"
-        r"([A-Za-z])\s+"
-        r"(.+?)\s+"
-        r"(?:"
-        r"([A-Za-z0-9]+=.*)"
-        r")?$"
+        r"^\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+([A-Za-z])\s+(.+?)\s+(?:([A-Za-z0-9]+=.*))?$"
     )
-
     for line in output.splitlines():
-
-        match = alarm_pattern.match(
-            line.strip()
-        )
-
+        match = alarm_pattern.match(line.strip())
         if not match:
             continue
-
-        timestamp = match.group(1)
-        severity = match.group(2)
-        remainder = match.group(3).strip()
-
-        alarm = {
-            "timestamp": timestamp,
-            "severity_code": severity,
-            "raw": line.strip(),
-        }
-        if severity == "C":
-            alarm["severity"] = "CRITICAL"
-        elif severity == "M":
-            alarm["severity"] = "MAJOR"
-        elif severity == "m":
-            alarm["severity"] = "MINOR"
-        elif severity == "w":
-            alarm["severity"] = "WARNING"
-        else:
-            alarm["severity"] = "UNKNOWN"
-        # Try to separate alarm name from MO/additional text.
-        mo_match = re.search(
-            r"\s{2,}"
-            r"([A-Za-z][A-Za-z0-9_]+=[^ ]+.*)$",
-            remainder,
+        timestamp, severity_code, remainder = (
+            match.group(1), match.group(2), match.group(3).strip()
         )
-
+        mo_match = re.search(r"\s{2,}([A-Za-z][A-Za-z0-9_]+=[^ ]+.*)$", remainder)
         if mo_match:
-            alarm["problem"] = (
-                remainder[:mo_match.start()]
-                .strip()
-            )
-            alarm["additional_text"] = (
-                mo_match.group(1).strip()
-            )
+            problem = remainder[:mo_match.start()].strip()
+            additional_text = mo_match.group(1).strip()
         else:
-            alarm["problem"] = remainder
+            problem = remainder
+            additional_text = ""
+        severity_map = {
+            "C": "CRITICAL", "M": "MAJOR", "m": "MINOR", "w": "WARNING",
+        }
+        all_alarms.append({
+            "timestamp": timestamp,
+            "severity_code": severity_code,
+            "severity": severity_map.get(severity_code, "UNKNOWN"),
+            "problem": problem,
+            "additional_text": additional_text,
+            "raw": line.strip(),
+        })
 
-        alarms.append(alarm)
-
-    critical_match = re.search(
-        r">>>\s*Total:\s*(\d+)\s+Alarms\s*"
-        r"\((\d+)\s+Critical,\s*"
-        r"(\d+)\s+Major\)",
+    summary = re.search(
+        r">>>\s*Total:\s*(\d+)\s+Alarms\s*\((\d+)\s+Critical,\s*(\d+)\s+Major\)",
         output,
         re.IGNORECASE,
     )
+    total_count = int(summary.group(1)) if summary else len(all_alarms)
 
-    critical_count = 0
-    major_count = 0
-    total_count = len(alarms)
+    relevant_pattern = re.compile(
+        r"\b(?:door|ac|power|cooling|fan|rectifier|battery|temperature|climate)\b",
+        re.IGNORECASE,
+    )
+    relevant = [
+        alarm for alarm in all_alarms
+        if relevant_pattern.search(
+            " ".join((alarm["problem"], alarm["additional_text"], alarm["raw"]))
+        )
+    ]
+    relevant_critical = sum(alarm["severity"] == "CRITICAL" for alarm in relevant)
+    relevant_major = sum(
+        alarm["severity"] in ("MAJOR", "MINOR", "WARNING")
+        for alarm in relevant
+    )
 
-    if critical_match:
-        total_count = int(
-            critical_match.group(1)
-        )
-        critical_count = int(
-            critical_match.group(2)
-        )
-        major_count = int(
-            critical_match.group(3)
-        )
-
-    # Prefer explicit Moshell summary when available.
-    if critical_count > 0:
+    if relevant_critical:
         status = "CRITICAL"
-    elif major_count > 0:
+    elif relevant_major:
         status = "WARNING"
-    elif alarms:
-        status = "WARNING"
-    else:
+    elif summary or all_alarms:
         status = "PASS"
+    else:
+        status = "UNKNOWN"
 
     return {
         "status": status,
         "total": total_count,
-        "critical": critical_count,
-        "major": major_count,
-        "alarms": alarms,
+        "critical": relevant_critical,
+        "major": relevant_major,
+        "relevant_count": len(relevant),
+        "ignored_count": len(all_alarms) - len(relevant),
+        "alarms": all_alarms,
+        "relevant_alarms": relevant,
+        "scope": "Door and AC/power/cooling/fan/battery/temperature alarms affect health.",
     }
-
 
 def parse_clock(
     output: str,
