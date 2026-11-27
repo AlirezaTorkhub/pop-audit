@@ -1,3 +1,4 @@
+from app.eband import analyze_eband
 from app.radio_rules import evaluate_difference, evaluate_rx_level
 from app.rtn import (
     analyze_generic_radio,
@@ -109,3 +110,20 @@ def test_intracom_and_nray_metrics_keep_actual_values_units_and_triggers():
         assert result["metrics"][0]["units"] == "bps"
         assert result["metrics"][0]["key"] == "rx_traffic[link-a]"
         assert result["metrics"][0]["status"] == "PASS"
+
+
+
+def test_eband_retains_capacity_profile_input_without_capacity_health():
+    items = {
+        "RX.110101": {"lastvalue": "-37", "units": "dBm", "itemid": "1", "lastclock": "1700000000"},
+        "TX.110101": {"lastvalue": "10", "units": "dBm", "itemid": "2", "lastclock": "1700000000"},
+        "rx_calloff": {"lastvalue": "0", "units": "dB", "itemid": "3", "lastclock": "1700000000"},
+        "tx_calloff": {"lastvalue": "0", "units": "dB", "itemid": "4", "lastclock": "1700000000"},
+        "actualTxCapacity.110101": {"lastvalue": "2486405120", "units": "bps", "itemid": "5", "lastclock": "1700000000"},
+        "actualRxAcmTC.110101": {"lastvalue": "16", "units": "", "itemid": "6", "lastclock": "1700000000"},
+    }
+    result = analyze_eband("host-1", "Bijan-2488-EBand", items)
+    slot1 = result["checks"]["difference"]["slots"][0]
+    assert slot1["capacity_profile_input"]["value"] == "2486405120"
+    assert "capacity" not in slot1
+    assert slot1["rx_health"]["status"] == "PASS"
