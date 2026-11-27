@@ -281,7 +281,7 @@ function showResults(audit) {
     }
 
     renderCisco(results.cisco);
-    renderNcs(results.cisco);
+    renderNcs(results.cisco, audit.discovery?.ncs_status, audit.discovery?.ncs_reason);
     renderEricsson(results.ericsson);
     renderBasebands(audit);
     renderRadio(results.radio);
@@ -566,7 +566,7 @@ function renderRadio(wrapper) {
         container.innerHTML = '<div class="empty-state">No outgoing radio links were discovered for this POP.</div>';
         return;
     }
-    let html = '<div class="table-wrap"><table><thead><tr><th>Type</th><th>Link</th><th>Destination</th><th>Status</th><th>Metrics</th></tr></thead><tbody>';
+    let html = '<div class="table-wrap"><table><thead><tr><th>Type</th><th>Link</th><th>Destination</th><th>Status</th><th>Analysis</th></tr></thead><tbody>';
     for (const link of links) {
         html += `<tr>
             <td>${escapeHtml(link.link_type || link.type)}</td>
@@ -577,19 +577,59 @@ function renderRadio(wrapper) {
         </tr>`;
     }
     html += '</tbody></table></div>';
+
     for (const link of links) {
         const analysis = link.analysis || {};
         const type = String(link.link_type || link.type || "").toUpperCase();
-        const metrics = type === "RTN"
-            ? [...(analysis.modulation || []), ...(analysis.difference || []), ...(analysis.traffic || [])]
-            : (analysis.metrics || []);
+        let metrics = [];
+        if (type === "RTN") {
+            metrics = [
+                ...(analysis.modulation || []),
+                ...(analysis.difference || []),
+                ...(analysis.traffic || []),
+            ];
+        } else if (type === "EBAND") {
+            const slots = analysis.checks?.difference?.slots || [];
+            for (const slot of slots) {
+                for (const field of ["rx", "tx", "rx_calloff", "tx_calloff", "zabbix_difference"]) {
+                    const metric = slot[field];
+                    if (metric) metrics.push({...metric, display_name: `Slot ${slot.slot} ${field.toUpperCase()}`});
+                }
+                const difference = slot.difference || {};
+                metrics.push({
+                    display_name: `Slot ${slot.slot} calculated difference`,
+                    value: difference.value,
+                    units: "dB",
+                    status: difference.status,
+                    reason: difference.reason,
+                });
+                const rx = slot.rx || {};
+                const rxHealth = slot.rx_health || {};
+                metrics.push({
+                    display_name: `Slot ${slot.slot} RX health`,
+                    value: rx.value,
+                    units: rx.units,
+                    status: rxHealth.status,
+                    reason: rxHealth.reason,
+                });
+                const modulation = slot.rx_modulation || {};
+                metrics.push({
+                    ...(modulation.metric || {}),
+                    display_name: `Slot ${slot.slot} RX modulation`,
+                    status: modulation.health?.status,
+                    reason: modulation.health?.reason,
+                });
+            }
+        } else {
+            metrics = analysis.metrics || [];
+        }
         if (!metrics.length) continue;
         html += `<div class="metric-section"><strong>${escapeHtml(link.name)} · ${escapeHtml(type)} metrics</strong>
-            <div class="table-wrap"><table><thead><tr><th>Metric</th><th>Key</th><th>Value</th><th>Units</th><th>Timestamp</th><th>Status</th><th>12h Max</th><th>Samples</th></tr></thead><tbody>`;
+            <div class="table-wrap"><table><thead><tr><th>Metric</th><th>Key</th><th>Value</th><th>Units</th><th>Timestamp</th><th>Status</th><th>12h Maximum</th><th>Samples</th></tr></thead><tbody>`;
         for (const metric of metrics) {
             const history = metric.history || {};
             html += `<tr>
-                <td>${escapeHtml(metric.name || metric.direction || metric.link || metric.key)}</td>
+                <td>${escapeHtml(metric.display_name || metric.name || metric.direction || metric.link || metric.key)}</td>
                 <td>${escapeHtml(metric.key)}</td>
                 <td>${escapeHtml(metric.value ?? metric.raw_value)}</td>
                 <td>${escapeHtml(metric.units)}</td>
@@ -603,8 +643,6 @@ function renderRadio(wrapper) {
     }
     container.innerHTML = html;
 }
-
-
 function renderRadioAnalysisSummary(link) {
     const analysis = link.analysis || {};
     const type = String(link.link_type || link.type || "").toUpperCase();
@@ -702,12 +740,25 @@ function renderBasebands(audit) {
                     <div><span>Discovery</span><strong>${escapeHtml((bb.groups || []).join(", ") || bb.reason || "-")}</strong></div>
                 </div>
             </article>`;
+        const cellRows = Array.isArray(cells.cells) ? cells.cells : [];
+        if (cellRows.length) {
+            html += '<div class="table-wrap baseband-cell-table"><table><thead><tr><th>Cell / MO</th><th>Admin</th><th>Operational</th><th>Status</th></tr></thead><tbody>';
+            for (const cell of cellRows) {
+                html += `<tr>
+                    <td>${escapeHtml(cell.mo || cell.proxy)}</td>
+                    <td>${escapeHtml(cell.admin_state)}</td>
+                    <td>${escapeHtml(cell.oper_state)}</td>
+                    <td>${statusSpan(cell.status)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+        }
     }
     container.innerHTML = html;
 }
 
 
-function renderNcs(wrapper) {
+function renderNcs(wrapper, discoveryStatus = null, discoveryReason = null) {
     const container = $("ncsDetails");
     if (!wrapper) {
         $("ncsDetailStatus").textContent = "NOT_AVAILABLE";
@@ -718,11 +769,17 @@ function renderNcs(wrapper) {
     const devices = Array.isArray(data.ncs_devices) ? data.ncs_devices : (
         Array.isArray(data.results) ? data.results.filter(item => String(item.device_type || "").toLowerCase() === "ncs540") : []
     );
-    const status = devices.length ? normalizeStatus(data.status) : "NOT_EXISTS";
+    const statusOrder = {CRITICAL:5, WARNING:4, UNKNOWN:3, NOT_AVAILABLE:2, PASS:1, NOT_EXISTS:0};
+    const status = devices.length
+        ? devices.map(item => normalizeStatus(item.status)).reduce(
+            (worst, value) => statusOrder[value] > statusOrder[worst] ? value : worst,
+            "PASS"
+        )
+        : normalizeStatus(discoveryStatus || "NOT_EXISTS");
     $("ncsDetailStatus").textContent = status;
     $("ncsDetailStatus").className = `small-status badge-${statusClass(status)}`;
     if (!devices.length) {
-        container.innerHTML = '<div class="empty-state">No NCS 540 associated with this POP.</div>';
+        container.innerHTML = `<div class="empty-state">${escapeHtml(discoveryReason || (status === "NOT_EXISTS" ? "No NCS 540 associated with this POP." : "NCS 540 discovery is inconclusive."))}</div>`;
         return;
     }
     let html = "";
