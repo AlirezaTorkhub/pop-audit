@@ -20,6 +20,7 @@ function normalizeStatus(value) {
             "CRITICAL",
             "UNKNOWN",
             "NOT_AVAILABLE",
+            "NOT_EXISTS",
         ].includes(s)
     ) {
         return s;
@@ -224,7 +225,11 @@ function resetResults() {
 
     $("radioDetails").innerHTML =
         '<div class="empty-state">No data</div>';
-
+    $("basebandDetails").innerHTML =
+        '<div class="empty-state">No Baseband data</div>';
+    $("ncsDetails").innerHTML =
+        '<div class="empty-state">No NCS 540 data</div>';
+    $("categoryGrid").innerHTML = "";
     $("auditSummary").innerHTML = "";
 
     $("excelBtn").disabled = true;
@@ -276,8 +281,11 @@ function showResults(audit) {
     }
 
     renderCisco(results.cisco);
+    renderNcs(results.cisco);
     renderEricsson(results.ericsson);
+    renderBasebands(audit);
     renderRadio(results.radio);
+    renderCategories(audit);
     renderSummary(audit);
 
     if (audit.status === "COMPLETED") {
@@ -296,13 +304,14 @@ function extractServiceStatus(result) {
             "CRITICAL",
             "UNKNOWN",
             "NOT_AVAILABLE",
+            "NOT_EXISTS",
         ].includes(direct.toUpperCase())
     ) {
         return normalizeStatus(direct);
     }
 
     if (result?.status === "FAILED") {
-        return "CRITICAL";
+        return "UNKNOWN";
     }
 
     return "UNKNOWN";
@@ -322,119 +331,75 @@ function normalizeData(result) {
 
 function renderCisco(wrapper) {
     const container = $("ciscoDetails");
-
     if (!wrapper) {
-        container.innerHTML =
-            '<div class="empty-state">Cisco result unavailable</div>';
+        container.innerHTML = '<div class="empty-state">Cisco result unavailable</div>';
         return;
     }
-
     const data = normalizeData(wrapper);
-
-    $("ciscoDetailStatus").textContent =
-        normalizeStatus(data.status);
-
-    $("ciscoDetailStatus").className =
-        `small-status badge-${statusClass(data.status)}`;
-
-    const devices =
+    $("ciscoDetailStatus").textContent = normalizeStatus(data.status);
+    $("ciscoDetailStatus").className = `small-status badge-${statusClass(data.status)}`;
+    let devices = Array.isArray(data.switches) ? data.switches : (
         Array.isArray(data.results)
-            ? data.results
-            : [];
-
+            ? data.results.filter(item => String(item.device_type || "").toLowerCase() !== "ncs540")
+            : []
+    );
     if (!devices.length) {
-        container.innerHTML =
-            '<div class="empty-state">No Cisco device data</div>';
+        container.innerHTML = '<div class="empty-state">No Cisco switch devices were discovered for this POP.</div>';
         return;
     }
-
     let html = "";
-
     for (const device of devices) {
         const checks = device.checks || {};
-
-        const interfaces =
-            checks.interfaces?.data || [];
-
+        const interfaces = checks.interfaces?.data || [];
+        const logs = checks.logging?.recent_10 || [];
+        const crcProblems = (checks.crc_problems || []).filter(item => Number(item.crc) > 0);
         html += `
-            <div class="metric-grid">
-                <div class="metric">
-                    <div class="metric-label">Hostname</div>
-                    <div class="metric-value">
-                        ${escapeHtml(device.hostname)}
-                    </div>
-                </div>
-
-                <div class="metric">
-                    <div class="metric-label">IP</div>
-                    <div class="metric-value">
-                        ${escapeHtml(device.ip)}
-                    </div>
-                </div>
-
-                <div class="metric">
-                    <div class="metric-label">Overall</div>
-                    <div class="metric-value">
-                        ${statusSpan(device.status)}
-                    </div>
-                </div>
-
-                <div class="metric">
-                    <div class="metric-label">Interfaces</div>
-                    <div class="metric-value">
-                        ${interfaces.length}
-                    </div>
-                </div>
+            <div class="device-heading">
+                <strong>${escapeHtml(device.hostname)}</strong>
+                <span>${escapeHtml(device.ip || "-")} · ${statusSpan(device.status)}</span>
             </div>
-        `;
-
+            <div class="metric-grid">
+                <div class="metric"><div class="metric-label">Interfaces</div><div class="metric-value">${interfaces.length}</div></div>
+                <div class="metric"><div class="metric-label">CRC Problems</div><div class="metric-value">${crcProblems.length}</div></div>
+                <div class="metric"><div class="metric-label">Log Status</div><div class="metric-value">${statusSpan(checks.logging?.status)}</div></div>
+                <div class="metric"><div class="metric-label">Environment</div><div class="metric-value">${statusSpan(checks.environment?.status)}</div></div>
+            </div>`;
         if (interfaces.length) {
             html += `
-                <div class="table-wrap" style="margin-top:12px">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Interface</th>
-                                <th>Description</th>
-                                <th>Health</th>
-                                <th>Admin / Oper</th>
-                                <th>Speed</th>
-                                <th>CRC</th>
-                                <th>Input Errors</th>
-                                <th>Output Errors</th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-            `;
-
+                <div class="table-wrap" style="margin-top:12px"><table>
+                    <thead><tr><th>Interface</th><th>Description</th><th>Health</th><th>Admin / Oper</th><th>Speed</th><th>CRC</th><th>Input Errors</th><th>Output Errors</th></tr></thead><tbody>`;
             for (const item of interfaces) {
-                html += `
-                    <tr>
-                        <td>${escapeHtml(item.interface)}</td>
-                        <td>${escapeHtml(item.description)}</td>
-                        <td>${statusSpan(item.health)}</td>
-                        <td>${escapeHtml(
-                            `${item.status_raw || ""} / ${item.protocol || ""}`
-                        )}</td>
-                        <td>${escapeHtml(item.speed)}</td>
-                        <td>${escapeHtml(item.crc)}</td>
-                        <td>${escapeHtml(item.input_errors)}</td>
-                        <td>${escapeHtml(item.output_errors)}</td>
-                    </tr>
-                `;
+                html += `<tr>
+                    <td>${escapeHtml(item.interface)}</td>
+                    <td>${escapeHtml(item.description)}</td>
+                    <td>${statusSpan(item.health)}</td>
+                    <td>${escapeHtml(`${item.status_raw || ""} / ${item.protocol || ""}`)}</td>
+                    <td>${escapeHtml(item.speed)}</td>
+                    <td>${escapeHtml(item.crc)}</td>
+                    <td>${escapeHtml(item.input_errors)}</td>
+                    <td>${escapeHtml(item.output_errors)}</td>
+                </tr>`;
             }
-
-            html += `
-                        </tbody>
-                    </table>
-                </div>
-            `;
+            html += '</tbody></table></div>';
+        }
+        if (crcProblems.length) {
+            html += '<div class="problem-list"><strong>Measured CRC problems</strong><ul>';
+            for (const item of crcProblems) {
+                html += `<li>${escapeHtml(item.interface)}: ${escapeHtml(item.crc)} CRC errors</li>`;
+            }
+            html += '</ul></div>';
+        }
+        if (logs.length) {
+            html += '<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Recent log event</th></tr></thead><tbody>';
+            for (const line of logs.slice(-10)) {
+                html += `<tr><td>${escapeHtml(line)}</td></tr>`;
+            }
+            html += '</tbody></table></div>';
         }
     }
-
     container.innerHTML = html;
 }
+
 
 function renderEricsson(wrapper) {
     const container = $("ericssonDetails");
@@ -589,184 +554,199 @@ function renderEricsson(wrapper) {
 
 function renderRadio(wrapper) {
     const container = $("radioDetails");
-
     if (!wrapper) {
-        container.innerHTML =
-            '<div class="empty-state">Radio result unavailable</div>';
+        container.innerHTML = '<div class="empty-state">Radio result unavailable</div>';
         return;
     }
-
     const data = normalizeData(wrapper);
-
-    $("radioDetailStatus").textContent =
-        normalizeStatus(data.status);
-
-    $("radioDetailStatus").className =
-        `small-status badge-${statusClass(data.status)}`;
-
-    const links =
-        Array.isArray(data.links)
-            ? data.links
-            : [];
-
+    $("radioDetailStatus").textContent = normalizeStatus(data.status);
+    $("radioDetailStatus").className = `small-status badge-${statusClass(data.status)}`;
+    const links = Array.isArray(data.links) ? data.links : [];
     if (!links.length) {
-        container.innerHTML =
-            '<div class="empty-state">No radio links</div>';
+        container.innerHTML = '<div class="empty-state">No outgoing radio links were discovered for this POP.</div>';
         return;
     }
-
-    let html = `
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Type</th>
-                        <th>Name</th>
-                        <th>Destination</th>
-                        <th>Status</th>
-                        <th>Analysis</th>
-                    </tr>
-                </thead>
-                <tbody>
-    `;
-
+    let html = '<div class="table-wrap"><table><thead><tr><th>Type</th><th>Link</th><th>Destination</th><th>Status</th><th>Metrics</th></tr></thead><tbody>';
     for (const link of links) {
-        html += `
-            <tr>
-                <td>${escapeHtml(link.link_type)}</td>
-                <td>${escapeHtml(link.name)}</td>
-                <td>${escapeHtml(
-                    link.destination_name ||
-                    link.destination_site ||
-                    "-"
-                )}</td>
-                <td>${statusSpan(link.status)}</td>
-                <td>${renderRadioAnalysisSummary(link)}</td>
-            </tr>
-        `;
+        html += `<tr>
+            <td>${escapeHtml(link.link_type || link.type)}</td>
+            <td>${escapeHtml(link.name)}</td>
+            <td>${escapeHtml(link.destination_name || link.destination_site || "-")}</td>
+            <td>${statusSpan(link.status)}</td>
+            <td>${renderRadioAnalysisSummary(link)}</td>
+        </tr>`;
     }
-
-    html += `
-                </tbody>
-            </table>
-        </div>
-    `;
-
+    html += '</tbody></table></div>';
+    for (const link of links) {
+        const analysis = link.analysis || {};
+        const type = String(link.link_type || link.type || "").toUpperCase();
+        const metrics = type === "RTN"
+            ? [...(analysis.modulation || []), ...(analysis.difference || []), ...(analysis.traffic || [])]
+            : (analysis.metrics || []);
+        if (!metrics.length) continue;
+        html += `<div class="metric-section"><strong>${escapeHtml(link.name)} · ${escapeHtml(type)} metrics</strong>
+            <div class="table-wrap"><table><thead><tr><th>Metric</th><th>Key</th><th>Value</th><th>Units</th><th>Timestamp</th><th>Status</th><th>12h Max</th><th>Samples</th></tr></thead><tbody>`;
+        for (const metric of metrics) {
+            const history = metric.history || {};
+            html += `<tr>
+                <td>${escapeHtml(metric.name || metric.direction || metric.link || metric.key)}</td>
+                <td>${escapeHtml(metric.key)}</td>
+                <td>${escapeHtml(metric.value ?? metric.raw_value)}</td>
+                <td>${escapeHtml(metric.units)}</td>
+                <td>${escapeHtml(metric.clock || metric.lastclock)}</td>
+                <td>${statusSpan(metric.status)}</td>
+                <td>${escapeHtml(history.max)}</td>
+                <td>${escapeHtml(history.history_count)}</td>
+            </tr>`;
+        }
+        html += '</tbody></table></div></div>';
+    }
     container.innerHTML = html;
 }
 
+
 function renderRadioAnalysisSummary(link) {
     const analysis = link.analysis || {};
-
-    if (
-        String(link.link_type || "").toUpperCase() ===
-        "EBAND"
-    ) {
+    const type = String(link.link_type || link.type || "").toUpperCase();
+    if (type === "EBAND") {
         const checks = analysis.checks || {};
-
-        return `
-            Difference:
-            ${escapeHtml(
-                checks.difference?.status || "-"
-            )}
-            <br>
-            Interface:
-            ${escapeHtml(
-                checks.interfaces?.status || "-"
-            )}
-        `;
+        const slots = checks.difference?.slots || [];
+        return `Difference: ${escapeHtml(checks.difference?.status || "-")} · RX: ${escapeHtml(slots.map(s => s.rx_health?.status || "-").join("/"))}`;
     }
-
-    if (
-        String(link.link_type || "").toUpperCase() ===
-        "RTN"
-    ) {
-        const nestedLinks =
-            Array.isArray(analysis.links)
-                ? analysis.links
-                : [];
-
-        if (!nestedLinks.length) {
-            return "RTN analysis";
-        }
-
-        const statuses = nestedLinks
-            .map(item => item.status)
-            .filter(Boolean);
-
-        return `
-            Legs:
-            ${nestedLinks.length}
-            <br>
-            Status:
-            ${escapeHtml(
-                statuses.join(", ") || "-"
-            )}
-        `;
+    if (type === "RTN") {
+        return `Modulation: ${escapeHtml((analysis.modulation || []).length)} · Traffic: ${escapeHtml((analysis.traffic || []).length)} · History: ${escapeHtml(analysis.history_window_hours || 12)}h`;
     }
-
-    return "-";
+    return `Metrics: ${escapeHtml((analysis.metrics || []).length)}`;
 }
 
+
 function renderSummary(audit) {
-    const summary =
-        audit.summary || {};
-
-    const services =
-        summary.services || {};
-
+    const summary = audit.summary || {};
+    const services = summary.services || {};
+    const categories = summary.categories || {};
+    const ordered = ["Cisco Switch","BB1","BB2","NCS 540","EBand","Huawei RTN","Intracom","NRay"];
+    let rows = "";
+    for (const name of ordered) {
+        rows += `<tr><td>${escapeHtml(name)}</td><td>${statusSpan(categories[name] || "UNKNOWN")}</td></tr>`;
+    }
     $("auditSummary").innerHTML = `
-        <div class="table-wrap">
-            <table class="summary-table">
-                <tbody>
-                    <tr>
-                        <td>Service Count</td>
-                        <td>${escapeHtml(summary.service_count)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Critical</td>
-                        <td>${escapeHtml(summary.critical)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Warning</td>
-                        <td>${escapeHtml(summary.warning)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Unknown</td>
-                        <td>${escapeHtml(summary.unknown)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Not Available</td>
-                        <td>${escapeHtml(summary.not_available)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Pass</td>
-                        <td>${escapeHtml(summary.pass)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Cisco</td>
-                        <td>${statusSpan(services.cisco)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Ericsson</td>
-                        <td>${statusSpan(services.ericsson)}</td>
-                    </tr>
-
-                    <tr>
-                        <td>Radio</td>
-                        <td>${statusSpan(services.radio)}</td>
-                    </tr>
-                </tbody>
-            </table>
+        <div class="table-wrap"><table class="summary-table"><thead><tr><th>POP Component</th><th>Status</th></tr></thead><tbody>
+            ${rows}
+        </tbody></table></div>
+        <div class="summary-meta">
+            Services: ${escapeHtml(summary.service_count ?? 0)} ·
+            Critical categories: ${escapeHtml(summary.critical ?? 0)} ·
+            Warning categories: ${escapeHtml(summary.warning ?? 0)} ·
+            Unknown categories: ${escapeHtml(summary.unknown ?? 0)} ·
+            Not available: ${escapeHtml(summary.not_available ?? 0)} ·
+            Not exists: ${escapeHtml(summary.not_exists ?? 0)}
+        </div>
+        <div class="summary-service-meta">
+            Cisco service: ${statusSpan(services.cisco)} ·
+            Ericsson service: ${statusSpan(services.ericsson)} ·
+            Radio service: ${statusSpan(services.radio)}
         </div>
     `;
+}
+
+
+
+
+function renderCategories(audit) {
+    const categories = audit.summary?.categories || {};
+    const names = ["Cisco Switch","BB1","BB2","NCS 540","EBand","Huawei RTN","Intracom","NRay"];
+    $("categoryGrid").innerHTML = names.map(name => {
+        const status = normalizeStatus(categories[name] || "UNKNOWN");
+        return `<div class="category-card status-${statusClass(status)}">
+            <div class="category-name">${escapeHtml(name)}</div>
+            <div class="category-status">${statusSpan(status)}</div>
+        </div>`;
+    }).join("");
+}
+
+
+function renderBasebands(audit) {
+    const container = $("basebandDetails");
+    const discovery = audit.discovery || {};
+    const ericsson = normalizeData(audit.results?.ericsson || {});
+    const checksByHost = new Map(
+        (ericsson.results || []).map(device => [String(device.zabbix_hostid || ""), device])
+    );
+    const basebands = Array.isArray(discovery.basebands) ? discovery.basebands : [];
+    const expected = ["BB1", "BB2"];
+    let html = "";
+    for (let index = 0; index < 2; index++) {
+        const slot = expected[index];
+        const bb = basebands.find(item => item.name === slot) || basebands[index] || {name:slot,exists:false,status:"NOT_EXISTS"};
+        const device = checksByHost.get(String(bb.zabbix_hostid || "")) || {};
+        const checks = device.checks || {};
+        const cells = checks.cells || {};
+        const alarms = checks.alarms || {};
+        const clock = checks.clock || {};
+        const status = device.status || bb.status || (bb.exists ? "UNKNOWN" : "NOT_EXISTS");
+        html += `
+            <article class="baseband-card status-${statusClass(status)}">
+                <div class="baseband-card-header">
+                    <strong>${escapeHtml(slot)}</strong>
+                    ${statusSpan(status)}
+                </div>
+                <div class="baseband-host">${escapeHtml(bb.hostname || "Not discovered")}</div>
+                <div class="baseband-grid-values">
+                    <div><span>IP</span><strong>${escapeHtml(bb.ip || "-")}</strong></div>
+                    <div><span>Zabbix Host ID</span><strong>${escapeHtml(bb.zabbix_hostid || "-")}</strong></div>
+                    <div><span>LT ALL</span><strong>${statusSpan(checks.lt_all?.status || "NOT_AVAILABLE")}</strong></div>
+                    <div><span>Cells</span><strong>${escapeHtml(cells.count ?? "-")} · ${statusSpan(cells.status || "NOT_AVAILABLE")}</strong></div>
+                    <div><span>Alarms</span><strong>${escapeHtml(alarms.relevant_count ?? alarms.total ?? "-")} · ${statusSpan(alarms.status || "NOT_AVAILABLE")}</strong></div>
+                    <div><span>Radio Clock</span><strong>${escapeHtml(clock.state || "-")} · ${statusSpan(clock.status || "NOT_AVAILABLE")}</strong></div>
+                    <div><span>Clock Value</span><strong>${escapeHtml(clock.value ?? "-")}</strong></div>
+                    <div><span>Discovery</span><strong>${escapeHtml((bb.groups || []).join(", ") || bb.reason || "-")}</strong></div>
+                </div>
+            </article>`;
+    }
+    container.innerHTML = html;
+}
+
+
+function renderNcs(wrapper) {
+    const container = $("ncsDetails");
+    if (!wrapper) {
+        $("ncsDetailStatus").textContent = "NOT_AVAILABLE";
+        container.innerHTML = '<div class="empty-state">Cisco result unavailable</div>';
+        return;
+    }
+    const data = normalizeData(wrapper);
+    const devices = Array.isArray(data.ncs_devices) ? data.ncs_devices : (
+        Array.isArray(data.results) ? data.results.filter(item => String(item.device_type || "").toLowerCase() === "ncs540") : []
+    );
+    const status = devices.length ? normalizeStatus(data.status) : "NOT_EXISTS";
+    $("ncsDetailStatus").textContent = status;
+    $("ncsDetailStatus").className = `small-status badge-${statusClass(status)}`;
+    if (!devices.length) {
+        container.innerHTML = '<div class="empty-state">No NCS 540 associated with this POP.</div>';
+        return;
+    }
+    let html = "";
+    for (const device of devices) {
+        const checks = device.checks || {};
+        const interfaces = checks.interfaces?.data || [];
+        const logs = checks.logging?.recent_10 || [];
+        html += `<div class="device-heading"><strong>${escapeHtml(device.hostname)}</strong><span>${escapeHtml(device.ip || "-")} · ${statusSpan(device.status)}</span></div>`;
+        if (interfaces.length) {
+            html += '<div class="table-wrap"><table><thead><tr><th>Interface</th><th>Description</th><th>State</th><th>CRC</th><th>Input Errors</th><th>Output Errors</th><th>Health</th></tr></thead><tbody>';
+            for (const item of interfaces) {
+                html += `<tr><td>${escapeHtml(item.interface)}</td><td>${escapeHtml(item.description)}</td><td>${escapeHtml(item.line_state)} / ${escapeHtml(item.protocol)}</td><td>${escapeHtml(item.crc)}</td><td>${escapeHtml(item.input_errors)}</td><td>${escapeHtml(item.output_errors)}</td><td>${statusSpan(item.health)}</td></tr>`;
+            }
+            html += '</tbody></table></div>';
+        } else {
+            html += '<div class="empty-state">No parsed IOS XR interface data</div>';
+        }
+        if (logs.length) {
+            html += '<div class="problem-list"><strong>Latest logs</strong><ul>';
+            for (const line of logs.slice(-10)) html += `<li>${escapeHtml(line)}</li>`;
+            html += '</ul></div>';
+        }
+    }
+    container.innerHTML = html;
 }
 
 async function startAudit() {
