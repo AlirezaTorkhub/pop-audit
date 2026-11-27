@@ -1,0 +1,152 @@
+name: POP Audit CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    name: ${{ matrix.service }} tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - zabbix-service
+          - cisco-service
+          - ericsson-service
+          - radio-service
+          - orchestrator
+          - report-service
+          - gateway
+    env:
+      REPORT_DIR: /tmp/pop-audit-ci-reports
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ${{ matrix.service }}/requirements.txt
+      - name: Install dependencies
+        working-directory: ${{ matrix.service }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Compile Python sources
+        working-directory: ${{ matrix.service }}
+        run: python -m compileall -q app
+      - name: Run tests
+        working-directory: ${{ matrix.service }}
+        run: |
+          if [ -d tests ]; then
+            python -m pytest -q tests
+          else
+            echo "No service-local tests in this package."
+          fi
+
+  frontend:
+    name: Frontend syntax validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check frontend JavaScript syntax
+        run: node --check gateway/frontend/static/app.js
+
+  compose:
+    name: Docker Compose validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose interpolation
+        run: docker compose --env-file config/.env.example config --quiet
+      - name: Assert required services and dependency graph
+        shell: bash
+        run: |
+          docker compose --env-file config/.env.example config --format json > /tmp/pop-audit-compose.json
+          python - <<'PY'
+          import json
+
+          with open("/tmp/pop-audit-compose.json", encoding="utf-8") as handle:
+              config = json.load(handle)
+
+          services = config["services"]
+          expected = {
+              "gateway",
+              "orchestrator",
+              "zabbix-service",
+              "cisco-service",
+              "ericsson-service",
+              "radio-service",
+              "report-service",
+          }
+          assert set(services) == expected, (
+              f"Compose service set mismatch: expected {sorted(expected)}, "
+              f"got {sorted(services)}"
+          )
+
+          gateway = services["gateway"]
+          orchestrator = services["orchestrator"]
+          assert gateway["build"]["context"].rstrip("/").endswith("/gateway") or gateway["build"]["context"] == "./gateway"
+          assert orchestrator["build"]["context"].rstrip("/").endswith("/orchestrator") or orchestrator["build"]["context"] == "./orchestrator"
+          assert gateway["environment"]["ORCHESTRATOR_URL"] == "http://orchestrator:8001"
+          assert gateway["environment"]["REPORT_SERVICE_URL"] == "http://report-service:8006"
+          assert gateway["depends_on"]["orchestrator"]["condition"] == "service_healthy"
+          assert orchestrator["environment"]["ZABBIX_SERVICE_URL"] == "http://zabbix-service:8002"
+          assert orchestrator["environment"]["CISCO_SERVICE_URL"] == "http://cisco-service:8003"
+          assert orchestrator["environment"]["ERICSSON_SERVICE_URL"] == "http://ericsson-service:8004"
+          assert orchestrator["environment"]["RADIO_SERVICE_URL"] == "http://radio-service:8005"
+          assert orchestrator["environment"]["REPORT_SERVICE_URL"] == "http://report-service:8006"
+
+          required_dependencies = {
+              "zabbix-service", "cisco-service", "ericsson-service",
+              "radio-service", "report-service",
+          }
+          assert set(orchestrator["depends_on"]) == required_dependencies
+          assert all(
+              dependency["condition"] == "service_healthy"
+              for dependency in orchestrator["depends_on"].values()
+          )
+          assert orchestrator["healthcheck"]
+          assert "/health" in " ".join(orchestrator["healthcheck"]["test"])
+
+          published = [
+              name for name, service in services.items()
+              if service.get("ports")
+          ]
+          assert published == ["gateway"], (
+              f"Only Gateway may publish a host port, got {published}"
+          )
+          assert any(
+              mount.get("target") == "/opt/pop-audit/data"
+              for mount in orchestrator.get("volumes", [])
+          ), "Orchestrator SQLite data volume is missing"
+          assert not any(
+              mount.get("target") == "/opt/pop-audit/data"
+              for mount in gateway.get("volumes", [])
+          ), "Gateway must not mount or share the Orchestrator SQLite database"
+          assert any(
+              mount.get("target") == "/opt/pop-audit/reports"
+              for mount in services["report-service"].get("volumes", [])
+          ), "Report persistence volume is missing"
+          assert len({
+              tuple(networks) if isinstance(networks, list) else tuple(networks.keys())
+              for networks in (service.get("networks", {}) for service in services.values())
+          }) == 1, "Services do not share the expected internal network"
+          assert config["networks"]["pop-audit-internal"]["driver"] == "bridge"
+          assert all(service.get("restart") == "unless-stopped" for service in services.values())
+          assert services["ericsson-service"]["environment"]["MOSHELL_PATH"].endswith("/moshell")
+
+          print("Compose graph verified: seven services; Orchestrator is present, reachable and persistent.")
+          PY
+      - name: Build all service images
+        run: docker compose --env-file config/.env.example build

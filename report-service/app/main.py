@@ -39,6 +39,7 @@ STATUS_PRIORITY = {
     "UNKNOWN": 3,
     "NOT_AVAILABLE": 2,
     "PASS": 1,
+    "NOT_EXISTS": 0,
 }
 
 
@@ -48,6 +49,7 @@ STATUS_FILL = {
     "CRITICAL": "FFC7CE",
     "UNKNOWN": "D9E1F2",
     "NOT_AVAILABLE": "E7E6E6",
+    "NOT_EXISTS": "F2F2F2",
 }
 
 
@@ -89,43 +91,18 @@ def aggregate_status(
     )
 
 
-def service_status(
-    result: Any,
-) -> str:
-
-    if not isinstance(
-        result,
-        dict,
-    ):
+def service_status(result: Any) -> str:
+    if not isinstance(result, dict):
         return "UNKNOWN"
-
     status = result.get("status")
-
     if status in STATUS_PRIORITY:
         return status
-
     if status == "COMPLETED":
-
-        data = result.get(
-            "data"
-        )
-
-        if isinstance(data, dict):
-
-            data_status = data.get(
-                "status"
-            )
-
-            if data_status in STATUS_PRIORITY:
-                return data_status
-
-        return "PASS"
-
-    if status == "FAILED":
-        return "CRITICAL"
-
+        data = result.get("data")
+        if isinstance(data, dict) and data.get("status") in STATUS_PRIORITY:
+            return data["status"]
+        return "UNKNOWN"
     return "UNKNOWN"
-
 
 def find_data(
     result: dict[str, Any],
@@ -346,329 +323,100 @@ def build_summary(
     wb: Workbook,
     site_code: str,
     results: dict[str, Any],
+    summary: dict[str, Any] | None = None,
+    audit_status: str | None = None,
 ) -> None:
-
     ws = wb.active
     ws.title = "Summary"
-
-    ws.merge_cells(
-        "A1:F1"
-    )
-
-    ws["A1"] = (
-        f"POP AUDIT REPORT - SITE {site_code}"
-    )
-
-    style_title(
-        ws,
-        "A1:F1",
-    )
-
-    audit_time = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    statuses = {
-        name: service_status(result)
-        for name, result in results.items()
-    }
-
-    overall = aggregate_status(
-        list(
-            statuses.values()
-        )
-    )
-
-    add_kpi(
-        ws,
-        3,
-        "Site Code",
-        site_code,
-    )
-
-    add_kpi(
-        ws,
-        4,
-        "Audit Time",
-        audit_time,
-    )
-
-    add_kpi(
-        ws,
-        5,
-        "Overall Status",
-        overall,
-    )
-
-    style_status_cell(
-        ws["B5"]
-    )
-
-    row = 7
-
-    for service in (
-        "cisco",
-        "ericsson",
-        "radio",
-    ):
-
-        add_kpi(
-            ws,
-            row,
-            service.upper(),
-            statuses.get(
-                service,
-                "NOT_AVAILABLE",
-            ),
-        )
-
-        style_status_cell(
-            ws.cell(
-                row=row,
-                column=2,
-            )
-        )
-
+    ws.merge_cells("A1:F1")
+    ws["A1"] = f"POP AUDIT REPORT - SITE {site_code}"
+    style_title(ws, "A1:F1")
+    audit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    categories = (summary or {}).get("categories") or {}
+    ordered = ("Cisco Switch", "BB1", "BB2", "NCS 540", "EBand", "Huawei RTN", "Intracom", "NRay")
+    applicable = [categories.get(name, "UNKNOWN") for name in ordered if categories.get(name, "NOT_EXISTS") != "NOT_EXISTS"]
+    overall = audit_status or aggregate_status(applicable)
+    add_kpi(ws, 3, "Site Code", site_code)
+    add_kpi(ws, 4, "Audit Time", audit_time)
+    add_kpi(ws, 5, "Overall Status", overall)
+    style_status_cell(ws["B5"])
+    ws["A7"] = "POP COMPONENT"
+    ws["B7"] = "STATUS"
+    style_header(ws, 7)
+    row = 8
+    for name in ordered:
+        ws.cell(row=row, column=1, value=name)
+        ws.cell(row=row, column=2, value=categories.get(name, "UNKNOWN"))
+        style_status_cell(ws.cell(row=row, column=2))
         row += 1
+    row += 1
+    ws.cell(row=row, column=1, value="SERVICE")
+    ws.cell(row=row, column=2, value="STATUS")
+    style_header(ws, row)
+    row += 1
+    for name in ("cisco", "ericsson", "radio"):
+        ws.cell(row=row, column=1, value=name.upper())
+        ws.cell(row=row, column=2, value=service_status(results.get(name)))
+        style_status_cell(ws.cell(row=row, column=2))
+        row += 1
+    ws.freeze_panes = "A8"
+    auto_width(ws)
 
-    ws.freeze_panes = "A3"
-
-    auto_width(
-        ws
-    )
-
-
-# ============================================================
-# Devices
-# ============================================================
-
-def build_devices(
-    wb: Workbook,
-    results: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "Devices"
-    )
-
-    headers = [
-        "Service",
-        "Hostname",
-        "IP",
-        "Zabbix Host ID",
-        "Status",
-    ]
-
-    ws.append(
-        headers
-    )
-
-    style_header(
-        ws,
-        1,
-    )
-
+def build_devices(wb: Workbook, results: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Devices")
+    ws.append(["Service / Device Type","Hostname","IP","Zabbix Host ID","Status"])
+    style_header(ws, 1)
     for service_name, result in results.items():
-
-        data = find_data(
-            result
-        )
-
+        data = find_data(result)
         if service_name == "cisco":
-
-            for device in data.get(
-                "results",
-                [],
-            ):
-
+            devices = data.get("results") or []
+            for device in devices:
+                device_type = str(device.get("device_type") or "switch").upper()
+                label = "NCS 540" if device_type == "NCS540" else f"Cisco {device_type}"
                 ws.append([
-                    "Cisco",
-                    device.get("hostname"),
-                    device.get("ip"),
-                    device.get("zabbix_hostid"),
-                    device.get("status"),
+                    label, device.get("hostname"), device.get("ip"),
+                    device.get("zabbix_hostid"), device.get("status"),
                 ])
-
         elif service_name == "ericsson":
-
-            for device in data.get(
-                "results",
-                [],
-            ):
-
+            for device in data.get("results", []):
                 ws.append([
-                    "Ericsson",
-                    device.get("hostname"),
-                    device.get("ip"),
-                    device.get("zabbix_hostid"),
-                    device.get("status"),
+                    "Ericsson Baseband", device.get("hostname"), device.get("ip"),
+                    device.get("zabbix_hostid"), device.get("status"),
                 ])
-
         elif service_name == "radio":
-
-            for link in data.get(
-                "links",
-                [],
-            ):
-
+            for link in data.get("links", []):
                 ws.append([
-                    link.get("link_type"),
-                    link.get("name"),
-                    None,
-                    link.get(
-                        "zabbix_hostid"
-                    ),
-                    link.get("status"),
+                    link.get("link_type"), link.get("name"), None,
+                    link.get("zabbix_hostid"), link.get("status"),
                 ])
-
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-        min_col=5,
-        max_col=5,
-    ):
-        style_status_cell(
-            row[0]
-        )
-
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=5, max_col=5):
+        style_status_cell(row[0])
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
+    auto_width(ws)
 
 
-# ============================================================
-# Cisco
-# ============================================================
 
-def build_cisco(
-    wb: Workbook,
-    result: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "Cisco"
-    )
-
-    ws.append([
-        "Hostname",
-        "IP",
-        "Interface",
-        "Description",
-        "Status",
-        "Admin/Oper",
-        "Speed",
-        "Duplex",
-        "CRC",
-        "Input Errors",
-        "Output Errors",
-        "Output Drops",
-        "Health Reason",
-    ])
-
-    style_header(
-        ws,
-        1,
-    )
-
-    data = find_data(
-        result
-    )
-
-    for device in data.get(
-        "results",
-        [],
-    ):
-
-        checks = device.get(
-            "checks",
-            {}
-        )
-
-        interface_check = checks.get(
-            "interfaces",
-            {}
-        )
-
-        interfaces = interface_check.get(
-            "data",
-            []
-        )
-
+def build_cisco(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Cisco Switches")
+    ws.append(["Hostname","IP","Zabbix Host ID","Interface","Description","Status","Admin/Oper","Speed","Duplex","CRC","Input Errors","Output Errors","Output Drops","Health Reason"])
+    style_header(ws, 1)
+    data = find_data(result)
+    devices = data.get("switches")
+    if not isinstance(devices, list):
+        devices = [d for d in data.get("results", []) if str(d.get("device_type", "")).lower() != "ncs540"]
+    for device in devices:
+        interfaces = device.get("checks", {}).get("interfaces", {}).get("data", [])
         if not interfaces:
-
-            ws.append([
-                device.get("hostname"),
-                device.get("ip"),
-                None,
-                None,
-                device.get("status"),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ])
-
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),None,None,device.get("status"),None,None,None,None,None,None,None,device.get("message") or device.get("error")])
             continue
-
         for item in interfaces:
-
-            ws.append([
-                device.get("hostname"),
-                device.get("ip"),
-                item.get("interface"),
-                item.get("description"),
-                item.get("health"),
-                (
-                    f'{item.get("status_raw")} / '
-                    f'{item.get("protocol") or ""}'
-                ),
-                item.get("speed"),
-                item.get("duplex"),
-                item.get("crc"),
-                item.get("input_errors"),
-                item.get("output_errors"),
-                item.get("output_drops"),
-                item.get("health_reason"),
-            ])
-
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-        min_col=5,
-        max_col=5,
-    ):
-        style_status_cell(
-            row[0]
-        )
-
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),item.get("interface"),item.get("description"),item.get("health"),f'{item.get("status_raw") or ""} / {item.get("protocol") or ""}',item.get("speed"),item.get("duplex"),item.get("crc"),item.get("input_errors"),item.get("output_errors"),item.get("output_drops"),item.get("health_reason")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=6, max_col=6):
+        style_status_cell(row[0])
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
-
-
-# ============================================================
-# Ericsson
-# ============================================================
+    auto_width(ws)
 
 def build_ericsson(
     wb: Workbook,
@@ -856,534 +604,137 @@ def build_ericsson(
 # RTN
 # ============================================================
 
-def build_rtn(
-    wb: Workbook,
-    result: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "RTN"
-    )
-
+def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("RTN")
     ws.append([
-        "Radio Host",
-        "Destination",
-        "Overall Status",
-        "Modulation Status",
-        "Difference Status",
-        "Traffic Status",
-        "Packet Loss",
+        "Radio Host", "Link / Destination", "Overall Status",
+        "Modulation Status", "Difference Status", "Traffic Status",
+        "Modulation Current", "Modulation Maximum", "History Samples",
+        "Current Timestamp", "Maximum Timestamp", "Packet Loss", "Packet Loss Status",
     ])
+    style_header(ws, 1)
+    data = find_data(result)
 
-    style_header(
-        ws,
-        1,
-    )
-
-    data = find_data(
-        result
-    )
-
-    for link in data.get(
-        "links",
-        [],
-    ):
-
-        if not isinstance(link, dict):
+    for link in data.get("links", []):
+        if str(link.get("link_type", "")).upper() != "RTN":
             continue
-
-        if str(
-            link.get(
-                "link_type",
-                ""
-            )
-        ).upper() != "RTN":
-
-            continue
-
-        analysis = link.get(
-            "analysis",
-            {}
-        )
-
-        if not isinstance(analysis, dict):
-            continue
-
-        analysis_links = analysis.get(
-            "links",
-            []
-        )
-
-        if not isinstance(analysis_links, list):
-            continue
-
-        for item in analysis_links:
-
-            if not isinstance(item, dict):
-                continue
-
-            destination = item.get(
-                "destination"
-            )
-
-            modulation = item.get(
-                "modulation",
-                []
-            )
-
-            difference = item.get(
-                "difference",
-                {}
-            )
-
-            traffic = item.get(
-                "traffic",
-                []
-            )
-
-            # ------------------------------------------------
-            # Normalise modulation statuses.
-            # Real Radio output may contain either:
-            #   [{"status": "PASS"}, ...]
-            # or:
-            #   ["PASS", "WARNING", ...]
-            # ------------------------------------------------
-            modulation_statuses = []
-
-            if isinstance(modulation, list):
-
-                for value in modulation:
-
-                    if isinstance(value, dict):
-
-                        status = value.get(
-                            "status"
-                        )
-
-                        if status:
-                            modulation_statuses.append(
-                                str(status).upper()
-                            )
-
-                    elif isinstance(value, str):
-
-                        modulation_statuses.append(
-                            value.upper()
-                        )
-
-            elif isinstance(modulation, dict):
-
-                status = modulation.get(
-                    "status"
-                )
-
-                if status:
-                    modulation_statuses.append(
-                        str(status).upper()
-                    )
-
-            elif isinstance(modulation, str):
-
-                modulation_statuses.append(
-                    modulation.upper()
-                )
-
-            # ------------------------------------------------
-            # Normalise traffic statuses.
-            # ------------------------------------------------
+        analysis = link.get("analysis", {})
+        for item in analysis.get("links", []):
+            modulation = item.get("modulation") or []
+            differences = item.get("difference") or []
+            traffic = item.get("traffic") or {}
+            modulation_statuses = [
+                str(value.get("status", "UNKNOWN")).upper()
+                for value in modulation if isinstance(value, dict)
+            ]
+            difference_statuses = [
+                str(value.get("status", "UNKNOWN")).upper()
+                for value in differences if isinstance(value, dict)
+            ]
             traffic_statuses = []
-
-            if isinstance(traffic, list):
-
-                for value in traffic:
-
-                    if isinstance(value, dict):
-
-                        status = value.get(
-                            "status"
-                        )
-
-                        if status:
-                            traffic_statuses.append(
-                                str(status).upper()
-                            )
-
-                    elif isinstance(value, str):
-
-                        traffic_statuses.append(
-                            value.upper()
-                        )
-
-            elif isinstance(traffic, dict):
-
-                status = traffic.get(
-                    "status"
+            for direction in ("RX", "TX"):
+                values = traffic.get(direction, []) if isinstance(traffic, dict) else []
+                traffic_statuses.extend(
+                    str(value.get("status", "UNKNOWN")).upper()
+                    for value in values if isinstance(value, dict)
                 )
-
-                if status:
-                    traffic_statuses.append(
-                        str(status).upper()
-                    )
-
-            elif isinstance(traffic, str):
-
-                traffic_statuses.append(
-                    traffic.upper()
-                )
-
-            # ------------------------------------------------
-            # Difference may be dict or direct status/string.
-            # ------------------------------------------------
-            difference_status = None
-
-            if isinstance(difference, dict):
-
-                difference_status = difference.get(
-                    "status"
-                )
-
-            elif isinstance(difference, str):
-
-                difference_status = difference
-
-            if difference_status:
-                difference_status = str(
-                    difference_status
-                ).upper()
-
-            # ------------------------------------------------
-            # Packet-loss extraction.
-            # ------------------------------------------------
-            packet_loss = None
-
-            packet_loss_data = item.get(
-                "packet_loss"
+            current_values = [
+                value for value in modulation
+                if isinstance(value, dict) and value.get("value") is not None
+            ]
+            latest = max(
+                current_values,
+                key=lambda value: int(value.get("clock") or 0),
+                default={},
             )
-
-            if isinstance(packet_loss_data, dict):
-
-                packet_loss = (
-                    packet_loss_data.get("value")
-                    if "value" in packet_loss_data
-                    else packet_loss_data.get("status")
-                )
-
-            elif packet_loss_data is not None:
-
-                packet_loss = packet_loss_data
-
+            history = latest.get("history", {}) if isinstance(latest.get("history"), dict) else {}
+            packet_loss = analysis.get("packet_loss") or {}
             ws.append([
                 link.get("name"),
-                destination,
+                item.get("destination"),
                 item.get("status"),
-                aggregate_status(
-                    modulation_statuses
-                ),
-                difference_status,
-                aggregate_status(
-                    traffic_statuses
-                ),
-                packet_loss,
+                aggregate_status(modulation_statuses),
+                aggregate_status(difference_statuses),
+                aggregate_status(traffic_statuses),
+                latest.get("value"),
+                history.get("max"),
+                history.get("history_count"),
+                history.get("current_timestamp"),
+                history.get("max_timestamp"),
+                packet_loss.get("value"),
+                packet_loss.get("status"),
             ])
 
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-    ):
-
-        for index in (
-            3,
-            4,
-            5,
-            6,
-        ):
-
-            style_status_cell(
-                row[index - 1]
-            )
-
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=3, max_col=6):
+        for cell in row:
+            style_status_cell(cell)
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=13, max_col=13):
+        style_status_cell(row[0])
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
+    auto_width(ws)
 
 
-# ============================================================
-# EBand
-# ============================================================
 
-def build_eband(
-    wb: Workbook,
-    result: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "EBand"
-    )
-
-    ws.append([
-        "Radio Host",
-        "Slot",
-        "RX",
-        "TX",
-        "RX Calloff",
-        "TX Calloff",
-        "Calculated Difference",
-        "Zabbix Difference",
-        "Capacity",
-        "RX Modulation",
-        "RX Health",
-        "Capacity Health",
-        "Modulation Health",
-        "Interface Status",
-        "Overall Status",
-    ])
-
-    style_header(
-        ws,
-        1,
-    )
-
-    data = find_data(
-        result
-    )
-
-    for link in data.get(
-        "links",
-        [],
-    ):
-
-        if str(
-            link.get(
-                "link_type",
-                ""
-            )
-        ).upper() != "EBAND":
-
+def build_eband(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("EBand")
+    ws.append(["Radio Host","Zabbix Host ID","Slot","RX","RX Units","TX","TX Units","RX Calloff","TX Calloff","Calculated Difference","Difference Status","RX Status","RX Modulation","Modulation Status","Capacity Profile Input","Capacity Units","Interface Status","Overall Status"])
+    style_header(ws, 1)
+    data = find_data(result)
+    for link in data.get("links", []):
+        if str(link.get("link_type", "")).upper() != "EBAND":
             continue
-
-        analysis = link.get(
-            "analysis",
-            {}
-        )
-
-        checks = analysis.get(
-            "checks",
-            {}
-        )
-
-        difference = checks.get(
-            "difference",
-            {}
-        )
-
-        slots = difference.get(
-            "slots",
-            []
-        )
-
-        for slot_data in slots:
-
-            rx = slot_data.get(
-                "rx",
-                {}
-            )
-
-            tx = slot_data.get(
-                "tx",
-                {}
-            )
-
-            rx_calloff = slot_data.get(
-                "rx_calloff",
-                {}
-            )
-
-            tx_calloff = slot_data.get(
-                "tx_calloff",
-                {}
-            )
-
-            diff = slot_data.get(
-                "difference",
-                {}
-            )
-
-            zabbix_diff = slot_data.get(
-                "zabbix_difference",
-                {}
-            )
-
-            capacity = slot_data.get(
-                "capacity",
-                {}
-            )
-
-            modulation = slot_data.get(
-                "rx_modulation",
-                {}
-            )
-
-            interfaces = checks.get(
-                "interfaces",
-                {}
-            )
-
-            ws.append([
-                link.get("name"),
-                slot_data.get("slot"),
-                rx.get("value"),
-                tx.get("value"),
-                rx_calloff.get("value"),
-                tx_calloff.get("value"),
-                diff.get("value"),
-                zabbix_diff.get("value"),
-                capacity.get(
-                    "metric",
-                    {}
-                ).get("value"),
-                modulation.get(
-                    "metric",
-                    {}
-                ).get("value"),
-                slot_data.get(
-                    "rx_health",
-                    {}
-                ).get("status"),
-                capacity.get(
-                    "health",
-                    {}
-                ).get("status"),
-                modulation.get(
-                    "health",
-                    {}
-                ).get("status"),
-                interfaces.get(
-                    "status"
-                ),
-                analysis.get(
-                    "status"
-                ),
-            ])
-
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-    ):
-
-        for index in (
-            11,
-            12,
-            13,
-            14,
-            15,
-        ):
-
-            style_status_cell(
-                row[index - 1]
-            )
-
+        analysis = link.get("analysis", {})
+        checks = analysis.get("checks", {})
+        for slot in checks.get("difference", {}).get("slots", []):
+            rx, tx = slot.get("rx", {}), slot.get("tx", {})
+            modulation = slot.get("rx_modulation", {})
+            diff = slot.get("difference", {})
+            ws.append([link.get("name"),link.get("zabbix_hostid"),slot.get("slot"),rx.get("value"),rx.get("units"),tx.get("value"),tx.get("units"),slot.get("rx_calloff", {}).get("value"),slot.get("tx_calloff", {}).get("value"),diff.get("value"),diff.get("status"),slot.get("rx_health", {}).get("status"),modulation.get("metric", {}).get("value"),modulation.get("health", {}).get("status"),slot.get("capacity_profile_input", {}).get("value"),slot.get("capacity_profile_input", {}).get("units"),checks.get("interfaces", {}).get("status"),analysis.get("status")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2):
+        for index in (11,12,14,17,18):
+            style_status_cell(row[index-1])
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
-
-
-# ============================================================
-# Workbook generation
-# ============================================================
+    auto_width(ws)
 
 def create_workbook(
     site_code: str,
     results: dict[str, Any],
+    discovery: dict[str, Any] | None = None,
+    summary: dict[str, Any] | None = None,
+    audit_status: str | None = None,
 ) -> tuple[Path, str]:
-
     wb = Workbook()
-
-    build_summary(
-        wb,
-        site_code,
-        results,
-    )
-
-    build_devices(
-        wb,
-        results,
-    )
-
+    build_summary(wb, site_code, results, summary, audit_status)
+    build_devices(wb, results)
+    if discovery:
+        build_basebands(wb, discovery, results.get("ericsson", {}))
     if "cisco" in results:
-        build_cisco(
-            wb,
-            results["cisco"],
-        )
-
+        build_cisco(wb, results["cisco"])
+        build_ncs(wb, results["cisco"])
+        build_crc_problems(wb, results["cisco"])
+        build_device_logs(wb, results["cisco"])
     if "ericsson" in results:
-        build_ericsson(
-            wb,
-            results["ericsson"],
-        )
-
+        build_ericsson(wb, results["ericsson"])
     if "radio" in results:
+        build_rtn(wb, results["radio"])
+        build_eband(wb, results["radio"])
+        build_links(wb, results["radio"])
 
-        build_rtn(
-            wb,
-            results["radio"],
-        )
-
-        build_eband(
-            wb,
-            results["radio"],
-        )
-
-    timestamp = datetime.now().strftime(
-        "%Y%m%d-%H%M%S"
-    )
-
-    safe_site = re.sub(
-        r"[^A-Za-z0-9_-]",
-        "_",
-        site_code,
-    )
-
-    filename = (
-        f"POP-Audit-{safe_site}-"
-        f"{timestamp}.xlsx"
-    )
-
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe_site = re.sub(r"[^A-Za-z0-9_-]", "_", site_code)
+    filename = f"POP-Audit-{safe_site}-{timestamp}.xlsx"
     output = REPORT_DIR / filename
+    wb.save(output)
 
-    wb.save(
-        output
+    categories = (summary or {}).get("categories") or {}
+    applicable = [value for value in categories.values() if value != "NOT_EXISTS"]
+    overall = audit_status or (
+        aggregate_status(applicable) if categories
+        else aggregate_status([service_status(result) for result in results.values()])
     )
-
-    overall = aggregate_status(
-        [
-            service_status(result)
-            for result in results.values()
-        ]
-    )
-
     return output, overall
-
-
-# ============================================================
-# API
-# ============================================================
-
 @app.get("/health")
 def health():
     return {
@@ -1429,6 +780,9 @@ def generate_report(
         output, overall = create_workbook(
             site_code,
             results,
+            payload.get("discovery") or {},
+            payload.get("summary") or {},
+            payload.get("audit_status"),
         )
 
     except Exception as exc:
@@ -1478,3 +832,134 @@ def download_report(
             "spreadsheetml.sheet"
         ),
     )
+
+def build_basebands(wb: Workbook, discovery: dict[str, Any], ericsson_result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Basebands")
+    ws.append(["Slot","Exists","Hostname","IP","Zabbix Host ID","Status","LT All","Cell Status","Cell Count","Alarm Status","Relevant Alarms","Clock Status","Clock State","Clock Value","Reason"])
+    style_header(ws, 1)
+    data = find_data(ericsson_result)
+    checks_by_host = {str(d.get("zabbix_hostid")): d for d in data.get("results", []) if d.get("zabbix_hostid")}
+    for bb in discovery.get("basebands", []):
+        device = checks_by_host.get(str(bb.get("zabbix_hostid") or ""), {})
+        checks = device.get("checks", {})
+        cells, alarms, clock = checks.get("cells", {}), checks.get("alarms", {}), checks.get("clock", {})
+        ws.append([bb.get("name"),bb.get("exists"),bb.get("hostname"),bb.get("ip"),bb.get("zabbix_hostid"),device.get("status") or bb.get("status") or "UNKNOWN",checks.get("lt_all", {}).get("status"),cells.get("status"),cells.get("count"),alarms.get("status"),alarms.get("relevant_count"),clock.get("status"),clock.get("state"),clock.get("value"),bb.get("reason") or device.get("error") or device.get("message")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2):
+        for index in (6,7,8,10,12):
+            style_status_cell(row[index-1])
+    ws.freeze_panes = "A2"
+    auto_width(ws)
+
+
+def build_ncs(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("NCS 540")
+    ws.append(["Hostname","IP","Zabbix Host ID","Interface","Description","Health","Line State","Protocol","CRC","Input Errors","Output Errors","Health Reason"])
+    style_header(ws, 1)
+    data = find_data(result)
+    devices = data.get("ncs_devices")
+    if not isinstance(devices, list):
+        devices = [d for d in data.get("results", []) if str(d.get("device_type", "")).lower() == "ncs540"]
+    for device in devices:
+        interfaces = device.get("checks", {}).get("interfaces", {}).get("data", [])
+        if not interfaces:
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),None,None,device.get("status"),None,None,None,None,None,device.get("message") or device.get("error")])
+            continue
+        for item in interfaces:
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),item.get("interface"),item.get("description"),item.get("health"),item.get("line_state"),item.get("protocol"),item.get("crc"),item.get("input_errors"),item.get("output_errors"),item.get("health_reason")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=6, max_col=6):
+        style_status_cell(row[0])
+    ws.freeze_panes = "A2"
+    auto_width(ws)
+
+
+def build_crc_problems(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("CRC Problems")
+    ws.append(["Device Type","Hostname","IP","Interface","CRC","Description"])
+    style_header(ws, 1)
+    data = find_data(result)
+    for device in data.get("results", []):
+        for item in device.get("checks", {}).get("interfaces", {}).get("data", []):
+            crc = item.get("crc")
+            if isinstance(crc, (int, float)) and crc > 0:
+                ws.append([str(device.get("device_type") or "Cisco").upper(),device.get("hostname"),device.get("ip"),item.get("interface"),crc,item.get("description")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    ws.freeze_panes = "A2"
+    auto_width(ws)
+
+
+def build_links(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Links")
+    ws.append(["Radio Type","Link","Source Site","Destination","Zabbix Host ID","Link Status","Metric","Item Key","Value","Units","Timestamp","Metric Status","History Count","History Maximum","Maximum Timestamp","Trigger Status","Trigger Details","Reason"])
+    style_header(ws, 1)
+    data = find_data(result)
+    for link in data.get("links", []):
+        radio_type = str(link.get("link_type") or link.get("type") or "UNKNOWN").upper()
+        analysis = link.get("analysis", {})
+        base = [radio_type,link.get("name"),link.get("source_site"),link.get("destination_name") or link.get("destination_site"),link.get("zabbix_hostid"),link.get("status")]
+        rows = []
+        def add_metric(label, metric, status=None, reason=None):
+            metric = metric if isinstance(metric, dict) else {}
+            history = metric.get("history", {}) if isinstance(metric.get("history"), dict) else {}
+            trigger = metric.get("trigger_health", {}) if isinstance(metric.get("trigger_health"), dict) else {}
+            rows.append(base + [label,metric.get("key"),metric.get("value",metric.get("raw_value")),metric.get("units",""),metric.get("clock"),status or metric.get("status"),history.get("history_count"),history.get("max"),history.get("max_timestamp"),trigger.get("status"),json.dumps(trigger.get("triggers",[]),ensure_ascii=False),reason or metric.get("reason") or history.get("reason")])
+        if radio_type == "EBAND":
+            checks=analysis.get("checks",{})
+            for slot in checks.get("difference",{}).get("slots",[]):
+                ix=slot.get("slot")
+                for field in ("rx","tx","rx_calloff","tx_calloff","zabbix_difference","capacity_profile_input"):
+                    add_metric(f"Slot {ix} {field.upper()}",slot.get(field,{}))
+                diff=slot.get("difference",{})
+                add_metric(f"Slot {ix} Difference",{"value":diff.get("value"),"units":"dB","status":diff.get("status"),"reason":diff.get("reason")})
+                add_metric(f"Slot {ix} RX Health",{"value":slot.get("rx",{}).get("value"),"units":slot.get("rx",{}).get("units"),"status":slot.get("rx_health",{}).get("status"),"reason":slot.get("rx_health",{}).get("reason")})
+                mod=slot.get("rx_modulation",{})
+                add_metric(f"Slot {ix} RX Modulation",mod.get("metric",{}),mod.get("health",{}).get("status"),mod.get("health",{}).get("reason"))
+        elif radio_type == "RTN":
+            for field,label in (("modulation","Huawei Modulation"),("difference","RX/TX Difference"),("traffic","Traffic")):
+                for metric in analysis.get(field,[]) if isinstance(analysis.get(field),list) else []:
+                    add_metric(label,metric)
+            packet_loss = analysis.get("packet_loss")
+            if isinstance(packet_loss, dict):
+                add_metric("Packet Loss", packet_loss)
+        else:
+            for metric in analysis.get("metrics",[]):
+                add_metric(radio_type+" Metric",metric)
+        if not rows:
+            rows.append(base+["No metric returned",None,None,None,None,None,None,None,None,None,None,analysis.get("reason")])
+        for row in rows:
+            ws.append(row)
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=6, max_col=6):
+        style_status_cell(row[0])
+    for row in ws.iter_rows(min_row=2, min_col=12, max_col=12):
+        style_status_cell(row[0])
+    ws.freeze_panes = "A2"
+    auto_width(ws, 48)
+
+
+
+def build_device_logs(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Device Logs")
+    ws.append(["Device Type","Hostname","Severity","Recent Event","Severity Counts"])
+    style_header(ws, 1)
+    data = find_data(result)
+    devices = data.get("results", [])
+    for device in devices:
+        checks = device.get("checks", {})
+        logging_data = checks.get("logging", {})
+        events = logging_data.get("recent_10") or logging_data.get("recent_20") or []
+        counts = logging_data.get("severity_counts", {})
+        device_type = str(device.get("device_type") or "Cisco Switch").upper()
+        if not events:
+            ws.append([device_type,device.get("hostname"),logging_data.get("status") or "UNKNOWN",None,json.dumps(counts,ensure_ascii=False)])
+            continue
+        for event in events[-10:]:
+            match = re.search(r"%[A-Z0-9_-]+-(\d+)-", str(event))
+            severity_map = {0:"EMERGENCY",1:"ALERT",2:"CRITICAL",3:"ERROR",4:"WARNING",5:"NOTICE",6:"INFO",7:"DEBUG"}
+            severity = severity_map.get(int(match.group(1))) if match else None
+            ws.append([device_type,device.get("hostname"),severity,str(event),json.dumps(counts,ensure_ascii=False)])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    ws.freeze_panes = "A2"
+    auto_width(ws, 55)
+

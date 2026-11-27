@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException
+import os
+
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
 from .client import ZabbixClient
@@ -65,9 +67,11 @@ def debug_groups():
         client.login()
 
         groups = [
-            "LTE-Backhaul-eNodeB",
-            "LTE-Backhaul-Switch",
-            "LTE-Backhaul-Radio",
+            os.getenv("ZABBIX_GROUP_ENODEB", "LTE-Backhaul-eNodeB"),
+            os.getenv("ZABBIX_GROUP_SWITCH", "LTE-Backhaul-Switch"),
+            os.getenv("ZABBIX_GROUP_SWITCH_AGGREGATION", "LTE-Backhaul-Switch-Aggregation"),
+            os.getenv("ZABBIX_GROUP_RADIO", "LTE-Backhaul-Radio"),
+            os.getenv("ZABBIX_GROUP_RADIO_HUAWEI", "LTE-Backhaul-Radio-Huawei"),
         ]
 
         output = {}
@@ -385,3 +389,61 @@ def host_triggers(hostid: str):
         )
 
 
+
+
+@app.get("/host/{hostid}/history")
+def get_host_history(
+    hostid: str,
+    itemid: str = Query(..., min_length=1),
+    value_type: int = Query(..., ge=0, le=5),
+    time_from: int = Query(..., ge=1),
+    time_till: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=1000, ge=1, le=10000),
+):
+    """Return numerical Zabbix history for one item on its owning host."""
+    try:
+        client = ZabbixClient()
+        client.login()
+        host = client.get_host(hostid)
+        if not host:
+            raise HTTPException(status_code=404, detail="Host not found.")
+
+        items = client.get_items(hostid)
+        target = next(
+            (item for item in items if str(item.get("itemid")) == str(itemid)),
+            None,
+        )
+        if not target:
+            raise HTTPException(
+                status_code=404,
+                detail="Item does not belong to the requested host or is unavailable.",
+            )
+        if str(target.get("value_type")) != str(value_type):
+            raise HTTPException(
+                status_code=400,
+                detail="value_type does not match the Zabbix item metadata.",
+            )
+        if value_type not in (0, 3):
+            raise HTTPException(
+                status_code=400,
+                detail="Only numerical float/unsigned history is supported.",
+            )
+
+        records = client.get_history(
+            itemid=itemid,
+            value_type=value_type,
+            time_from=time_from,
+            time_till=time_till,
+            limit=limit,
+        )
+        return {
+            "hostid": hostid,
+            "itemid": itemid,
+            "value_type": value_type,
+            "count": len(records),
+            "history": records,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Zabbix history request failed: {exc}")

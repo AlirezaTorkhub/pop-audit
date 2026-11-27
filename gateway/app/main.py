@@ -19,12 +19,12 @@ app = FastAPI(
 
 ORCHESTRATOR_URL = os.getenv(
     "ORCHESTRATOR_URL",
-    "http://127.0.0.1:8001",
+    "http://orchestrator:8001",
 )
 
 REPORT_SERVICE_URL = os.getenv(
     "REPORT_SERVICE_URL",
-    "http://127.0.0.1:8006",
+    "http://report-service:8006",
 )
 
 FRONTEND_DIR = Path(
