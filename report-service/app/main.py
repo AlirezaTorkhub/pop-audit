@@ -976,6 +976,7 @@ def create_workbook(
         build_cisco(wb, results["cisco"])
         build_ncs(wb, results["cisco"])
         build_crc_problems(wb, results["cisco"])
+        build_device_logs(wb, results["cisco"])
     if "ericsson" in results:
         build_ericsson(wb, results["ericsson"])
     if "radio" in results:
@@ -1145,11 +1146,6 @@ def build_crc_problems(wb: Workbook, result: dict[str, Any]) -> None:
             crc = item.get("crc")
             if isinstance(crc, (int, float)) and crc > 0:
                 ws.append([str(device.get("device_type") or "Cisco").upper(),device.get("hostname"),device.get("ip"),item.get("interface"),crc,item.get("description")])
-    for device in data.get("ncs_devices", []):
-        for item in device.get("checks", {}).get("interfaces", {}).get("data", []):
-            crc = item.get("crc")
-            if isinstance(crc, (int, float)) and crc > 0:
-                ws.append(["NCS540",device.get("hostname"),device.get("ip"),item.get("interface"),crc,item.get("description")])
     style_body(ws, 2, ws.max_row, ws.max_column)
     ws.freeze_panes = "A2"
     auto_width(ws)
@@ -1199,4 +1195,30 @@ def build_links(wb: Workbook, result: dict[str, Any]) -> None:
         style_status_cell(row[0])
     ws.freeze_panes = "A2"
     auto_width(ws, 48)
+
+
+
+def build_device_logs(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Device Logs")
+    ws.append(["Device Type","Hostname","Severity","Recent Event","Severity Counts"])
+    style_header(ws, 1)
+    data = find_data(result)
+    devices = data.get("results", [])
+    for device in devices:
+        checks = device.get("checks", {})
+        logging_data = checks.get("logging", {})
+        events = logging_data.get("recent_10") or logging_data.get("recent_20") or []
+        counts = logging_data.get("severity_counts", {})
+        device_type = str(device.get("device_type") or "Cisco Switch").upper()
+        if not events:
+            ws.append([device_type,device.get("hostname"),logging_data.get("status") or "UNKNOWN",None,json.dumps(counts,ensure_ascii=False)])
+            continue
+        for event in events[-10:]:
+            match = re.search(r"%[A-Z0-9_-]+-(\d+)-", str(event))
+            severity_map = {0:"EMERGENCY",1:"ALERT",2:"CRITICAL",3:"ERROR",4:"WARNING",5:"NOTICE",6:"INFO",7:"DEBUG"}
+            severity = severity_map.get(int(match.group(1))) if match else None
+            ws.append([device_type,device.get("hostname"),severity,str(event),json.dumps(counts,ensure_ascii=False)])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    ws.freeze_panes = "A2"
+    auto_width(ws, 55)
 
