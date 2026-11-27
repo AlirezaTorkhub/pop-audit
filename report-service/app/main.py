@@ -642,7 +642,11 @@ def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
                 value for value in modulation
                 if isinstance(value, dict) and value.get("value") is not None
             ]
-            latest = current_values[-1] if current_values else {}
+            latest = max(
+                current_values,
+                key=lambda value: int(value.get("clock") or 0),
+                default={},
+            )
             history = latest.get("history", {}) if isinstance(latest.get("history"), dict) else {}
             packet_loss = analysis.get("packet_loss") or {}
             ws.append([
