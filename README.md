@@ -87,7 +87,7 @@ The Zabbix service also exposes inventory/debug endpoints and a validated numeri
 
 ## CI and local checks
 
-GitHub Actions runs service-local pytest suites, Python compilation, frontend JavaScript syntax validation, and Docker Compose configuration validation. The tests use fixtures/mocks and do not connect to live switches, Basebands, or Zabbix.
+GitHub Actions runs service-local pytest suites, Python compilation, frontend JavaScript syntax validation, Docker Compose configuration validation, and builds all service images. The tests use fixtures/mocks and do not connect to live switches, Basebands, or Zabbix.
 
 To run one service's suite locally:
 
