@@ -234,6 +234,61 @@ def _history_points(history: dict[str, list[dict]], itemid: str) -> list[dict]:
     return value if isinstance(value, list) else []
 
 
+
+def evaluate_packet_loss(value: Any) -> dict[str, Any]:
+    numeric = to_float(value)
+    if numeric is None:
+        return {
+            "status": "NOT_AVAILABLE",
+            "value": None,
+            "warning_threshold": 5,
+            "critical_threshold": 80,
+            "description": "Packet loss unavailable.",
+        }
+    if numeric > 80:
+        status = "CRITICAL"
+        description = "Packet loss above 80%."
+    elif numeric >= 5:
+        status = "WARNING"
+        description = "Packet loss is at or above 5%."
+    else:
+        status = "PASS"
+        description = "Packet loss is below 5%."
+    return {
+        "status": status,
+        "value": numeric,
+        "warning_threshold": 5,
+        "critical_threshold": 80,
+        "description": description,
+    }
+
+
+def _packet_loss_record(
+    items: list[dict],
+    trigger_index: dict[str, list[dict]],
+) -> dict[str, Any] | None:
+    for item in items:
+        key = str(item.get("key_") or "").lower()
+        name = str(item.get("name") or "").lower()
+        if key != "packetloss" and "packet loss" not in name:
+            continue
+        metric = _metric(item)
+        related = trigger_index.get(metric["itemid"], [])
+        trigger_health = _trigger_summary(related)
+        check = evaluate_packet_loss(metric["value"])
+        if trigger_health["status"] in ("CRITICAL", "WARNING"):
+            status = aggregate_status([check["status"], trigger_health["status"]])
+        else:
+            status = check["status"]
+        return {
+            **metric,
+            **check,
+            "trigger_health": trigger_health,
+            "status": status,
+        }
+    return None
+
+
 def _metric_records(
     items: list[dict],
     trigger_index: dict[str, list[dict]],
@@ -342,6 +397,7 @@ def analyze_rtn(
     )
     traffic = _traffic_records(items, trigger_index)
     differences = _difference_records(items, trigger_index)
+    packet_loss = _packet_loss_record(items, trigger_index)
 
     grouped: dict[str, dict[str, Any]] = {}
     for record in modulation + traffic + differences:
@@ -375,6 +431,8 @@ def analyze_rtn(
         link["status"] = aggregate_status(statuses)
 
     all_statuses = [entry["status"] for entry in grouped.values()]
+    if packet_loss is not None:
+        all_statuses.append(packet_loss["status"])
     return {
         "type": "RTN",
         "status": aggregate_status(all_statuses),
@@ -389,6 +447,7 @@ def analyze_rtn(
         "modulation": modulation,
         "difference": differences,
         "traffic": traffic,
+        "packet_loss": packet_loss,
     }
 
 
