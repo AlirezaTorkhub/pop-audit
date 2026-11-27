@@ -71,5 +71,5 @@ def test_workbook_contains_eight_categories_basebands_ncs_and_unified_links(tmp_
     eband_sheet = workbook["EBand"]
     headers = [cell.value for cell in next(eband_sheet.iter_rows(min_row=1, max_row=1))]
     assert "Capacity Health" not in headers
-    assert "Capacity" not in headers
+    assert "Capacity Profile Input" in headers
     workbook.close()
