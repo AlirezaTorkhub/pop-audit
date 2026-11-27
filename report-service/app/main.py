@@ -914,7 +914,7 @@ def build_links(wb: Workbook, result: dict[str, Any]) -> None:
             for metric in analysis.get("metrics",[]):
                 add_metric(radio_type+" Metric",metric)
         if not rows:
-            rows.append(base+["No metric returned",None,None,None,None,None,None,None,None,None,analysis.get("reason")])
+            rows.append(base+["No metric returned",None,None,None,None,None,None,None,None,None,None,analysis.get("reason")])
         for row in rows:
             ws.append(row)
     style_body(ws, 2, ws.max_row, ws.max_column)
