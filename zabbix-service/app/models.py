@@ -66,6 +66,8 @@ class DiscoveryResult(BaseModel):
     basebands: List[Baseband] = Field(default_factory=list)
     devices: List[Device] = Field(default_factory=list)
     ncs_devices: List[Device] = Field(default_factory=list)
+    ncs_status: str = "NOT_EXISTS"
+    ncs_reason: Optional[str] = None
     radio_links: List[RadioLink] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
