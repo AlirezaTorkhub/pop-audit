@@ -7,12 +7,14 @@ from typing import Any
 
 
 def to_float(value: Any) -> float | None:
+    import math
     if value is None:
         return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def aggregate_status(statuses: list[str]) -> str:
