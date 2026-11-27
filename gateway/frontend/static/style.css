@@ -789,3 +789,16 @@ footer {
 @media (max-width: 460px) {
     .baseband-grid-values { grid-template-columns: 1fr; }
 }
+
+
+
+.status-not_exists {
+    color: #cbd5e1;
+}
+.badge-not_exists {
+    background: rgba(100, 116, 139, 0.14);
+    color: #cbd5e1;
+}
+.service-card.not_exists {
+    border-top-color: var(--na);
+}
