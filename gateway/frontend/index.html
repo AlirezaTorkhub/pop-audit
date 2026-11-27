@@ -196,6 +196,15 @@
 
             </div>
 
+            <section class="panel category-overview">
+                <div class="detail-header">
+                    <div>
+                        <h3>POP Component Overview</h3>
+                        <span>Eight separately evaluated infrastructure categories</span>
+                    </div>
+                </div>
+                <div id="categoryGrid" class="category-grid"></div>
+            </section>
 
             <!-- ================================================= -->
             <!-- SERVICE CARDS -->
@@ -289,7 +298,7 @@
                         <div>
                             <h3>Cisco</h3>
                             <span>
-                                Switch health and interfaces
+                                Primary Cisco switch interfaces, counters and logs
                             </span>
                         </div>
 
@@ -337,13 +346,40 @@
                 </section>
 
 
+
+                <section class="detail-panel detail-panel-wide">
+                    <div class="detail-header">
+                        <div>
+                            <h3>Baseband Details</h3>
+                            <span>BB1 and BB2 discovery, Moshell, cells, alarms and radio clock</span>
+                        </div>
+                    </div>
+                    <div id="basebandDetails" class="baseband-grid">
+                        <div class="empty-state">No Baseband data</div>
+                    </div>
+                </section>
+
+                <section class="detail-panel detail-panel-wide">
+                    <div class="detail-header">
+                        <div>
+                            <h3>Cisco NCS 540</h3>
+                            <span>IOS XR interface state, CRC counters and latest logs</span>
+                        </div>
+                        <div id="ncsDetailStatus" class="small-status unknown">UNKNOWN</div>
+                    </div>
+                    <div id="ncsDetails">
+                        <div class="empty-state">No NCS 540 data</div>
+                    </div>
+                </section>
+
+
                 <section class="detail-panel detail-panel-wide">
 
                     <div class="detail-header">
                         <div>
                             <h3>Radio</h3>
                             <span>
-                                RTN and EBand link health
+                                EBand, Huawei RTN, Intracom and NRay
                             </span>
                         </div>
 
