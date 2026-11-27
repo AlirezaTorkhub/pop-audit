@@ -99,6 +99,7 @@ STATUS_PRIORITY = {
     "UNKNOWN": 3,
     "NOT_AVAILABLE": 2,
     "PASS": 1,
+    "NOT_EXISTS": 0,
 }
 
 
@@ -631,6 +632,36 @@ def check(payload: dict):
         hostid = bb.get(
             "zabbix_hostid"
         )
+
+        if bb.get("exists") is False or bb.get("status") == "NOT_EXISTS":
+            results.append({
+                "hostname": hostname,
+                "ip": ip,
+                "zabbix_hostid": hostid,
+                "status": "NOT_EXISTS",
+                "message": "Baseband does not exist in the discovered POP inventory.",
+            })
+            continue
+
+        if not hostid:
+            results.append({
+                "hostname": hostname,
+                "ip": ip,
+                "zabbix_hostid": hostid,
+                "status": bb.get("status") or "NOT_AVAILABLE",
+                "message": bb.get("reason") or "Baseband has no Zabbix host identity.",
+            })
+            continue
+
+        if not ip:
+            results.append({
+                "hostname": hostname,
+                "ip": ip,
+                "zabbix_hostid": hostid,
+                "status": "NOT_AVAILABLE",
+                "message": "Discovered Baseband has no management IP.",
+            })
+            continue
 
         try:
 
