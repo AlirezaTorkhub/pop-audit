@@ -362,111 +362,40 @@ def build_summary(
     ws.freeze_panes = "A8"
     auto_width(ws)
 
-def build_devices(
-    wb: Workbook,
-    results: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "Devices"
-    )
-
-    headers = [
-        "Service",
-        "Hostname",
-        "IP",
-        "Zabbix Host ID",
-        "Status",
-    ]
-
-    ws.append(
-        headers
-    )
-
-    style_header(
-        ws,
-        1,
-    )
-
+def build_devices(wb: Workbook, results: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Devices")
+    ws.append(["Service / Device Type","Hostname","IP","Zabbix Host ID","Status"])
+    style_header(ws, 1)
     for service_name, result in results.items():
-
-        data = find_data(
-            result
-        )
-
+        data = find_data(result)
         if service_name == "cisco":
-
-            for device in data.get(
-                "results",
-                [],
-            ):
-
+            devices = data.get("results") or []
+            for device in devices:
+                device_type = str(device.get("device_type") or "switch").upper()
+                label = "NCS 540" if device_type == "NCS540" else f"Cisco {device_type}"
                 ws.append([
-                    "Cisco",
-                    device.get("hostname"),
-                    device.get("ip"),
-                    device.get("zabbix_hostid"),
-                    device.get("status"),
+                    label, device.get("hostname"), device.get("ip"),
+                    device.get("zabbix_hostid"), device.get("status"),
                 ])
-
         elif service_name == "ericsson":
-
-            for device in data.get(
-                "results",
-                [],
-            ):
-
+            for device in data.get("results", []):
                 ws.append([
-                    "Ericsson",
-                    device.get("hostname"),
-                    device.get("ip"),
-                    device.get("zabbix_hostid"),
-                    device.get("status"),
+                    "Ericsson Baseband", device.get("hostname"), device.get("ip"),
+                    device.get("zabbix_hostid"), device.get("status"),
                 ])
-
         elif service_name == "radio":
-
-            for link in data.get(
-                "links",
-                [],
-            ):
-
+            for link in data.get("links", []):
                 ws.append([
-                    link.get("link_type"),
-                    link.get("name"),
-                    None,
-                    link.get(
-                        "zabbix_hostid"
-                    ),
-                    link.get("status"),
+                    link.get("link_type"), link.get("name"), None,
+                    link.get("zabbix_hostid"), link.get("status"),
                 ])
-
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-        min_col=5,
-        max_col=5,
-    ):
-        style_status_cell(
-            row[0]
-        )
-
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=5, max_col=5):
+        style_status_cell(row[0])
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
+    auto_width(ws)
 
 
-# ============================================================
-# Cisco
-# ============================================================
 
 def build_cisco(wb: Workbook, result: dict[str, Any]) -> None:
     ws = wb.create_sheet("Cisco Switches")
@@ -675,268 +604,68 @@ def build_ericsson(
 # RTN
 # ============================================================
 
-def build_rtn(
-    wb: Workbook,
-    result: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "RTN"
-    )
-
+def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("RTN")
     ws.append([
-        "Radio Host",
-        "Destination",
-        "Overall Status",
-        "Modulation Status",
-        "Difference Status",
-        "Traffic Status",
-        "Packet Loss",
+        "Radio Host", "Link / Destination", "Overall Status",
+        "Modulation Status", "Difference Status", "Traffic Status",
+        "Modulation Current", "Modulation Maximum", "History Samples",
+        "Current Timestamp", "Maximum Timestamp",
     ])
+    style_header(ws, 1)
+    data = find_data(result)
 
-    style_header(
-        ws,
-        1,
-    )
-
-    data = find_data(
-        result
-    )
-
-    for link in data.get(
-        "links",
-        [],
-    ):
-
-        if not isinstance(link, dict):
+    for link in data.get("links", []):
+        if str(link.get("link_type", "")).upper() != "RTN":
             continue
-
-        if str(
-            link.get(
-                "link_type",
-                ""
-            )
-        ).upper() != "RTN":
-
-            continue
-
-        analysis = link.get(
-            "analysis",
-            {}
-        )
-
-        if not isinstance(analysis, dict):
-            continue
-
-        analysis_links = analysis.get(
-            "links",
-            []
-        )
-
-        if not isinstance(analysis_links, list):
-            continue
-
-        for item in analysis_links:
-
-            if not isinstance(item, dict):
-                continue
-
-            destination = item.get(
-                "destination"
-            )
-
-            modulation = item.get(
-                "modulation",
-                []
-            )
-
-            difference = item.get(
-                "difference",
-                {}
-            )
-
-            traffic = item.get(
-                "traffic",
-                []
-            )
-
-            # ------------------------------------------------
-            # Normalise modulation statuses.
-            # Real Radio output may contain either:
-            #   [{"status": "PASS"}, ...]
-            # or:
-            #   ["PASS", "WARNING", ...]
-            # ------------------------------------------------
-            modulation_statuses = []
-
-            if isinstance(modulation, list):
-
-                for value in modulation:
-
-                    if isinstance(value, dict):
-
-                        status = value.get(
-                            "status"
-                        )
-
-                        if status:
-                            modulation_statuses.append(
-                                str(status).upper()
-                            )
-
-                    elif isinstance(value, str):
-
-                        modulation_statuses.append(
-                            value.upper()
-                        )
-
-            elif isinstance(modulation, dict):
-
-                status = modulation.get(
-                    "status"
-                )
-
-                if status:
-                    modulation_statuses.append(
-                        str(status).upper()
-                    )
-
-            elif isinstance(modulation, str):
-
-                modulation_statuses.append(
-                    modulation.upper()
-                )
-
-            # ------------------------------------------------
-            # Normalise traffic statuses.
-            # ------------------------------------------------
+        analysis = link.get("analysis", {})
+        for item in analysis.get("links", []):
+            modulation = item.get("modulation") or []
+            differences = item.get("difference") or []
+            traffic = item.get("traffic") or {}
+            modulation_statuses = [
+                str(value.get("status", "UNKNOWN")).upper()
+                for value in modulation if isinstance(value, dict)
+            ]
+            difference_statuses = [
+                str(value.get("status", "UNKNOWN")).upper()
+                for value in differences if isinstance(value, dict)
+            ]
             traffic_statuses = []
-
-            if isinstance(traffic, list):
-
-                for value in traffic:
-
-                    if isinstance(value, dict):
-
-                        status = value.get(
-                            "status"
-                        )
-
-                        if status:
-                            traffic_statuses.append(
-                                str(status).upper()
-                            )
-
-                    elif isinstance(value, str):
-
-                        traffic_statuses.append(
-                            value.upper()
-                        )
-
-            elif isinstance(traffic, dict):
-
-                status = traffic.get(
-                    "status"
+            for direction in ("RX", "TX"):
+                values = traffic.get(direction, []) if isinstance(traffic, dict) else []
+                traffic_statuses.extend(
+                    str(value.get("status", "UNKNOWN")).upper()
+                    for value in values if isinstance(value, dict)
                 )
-
-                if status:
-                    traffic_statuses.append(
-                        str(status).upper()
-                    )
-
-            elif isinstance(traffic, str):
-
-                traffic_statuses.append(
-                    traffic.upper()
-                )
-
-            # ------------------------------------------------
-            # Difference may be dict or direct status/string.
-            # ------------------------------------------------
-            difference_status = None
-
-            if isinstance(difference, dict):
-
-                difference_status = difference.get(
-                    "status"
-                )
-
-            elif isinstance(difference, str):
-
-                difference_status = difference
-
-            if difference_status:
-                difference_status = str(
-                    difference_status
-                ).upper()
-
-            # ------------------------------------------------
-            # Packet-loss extraction.
-            # ------------------------------------------------
-            packet_loss = None
-
-            packet_loss_data = item.get(
-                "packet_loss"
-            )
-
-            if isinstance(packet_loss_data, dict):
-
-                packet_loss = (
-                    packet_loss_data.get("value")
-                    if "value" in packet_loss_data
-                    else packet_loss_data.get("status")
-                )
-
-            elif packet_loss_data is not None:
-
-                packet_loss = packet_loss_data
-
+            current_values = [
+                value for value in modulation
+                if isinstance(value, dict) and value.get("value") is not None
+            ]
+            latest = current_values[-1] if current_values else {}
+            history = latest.get("history", {}) if isinstance(latest.get("history"), dict) else {}
             ws.append([
                 link.get("name"),
-                destination,
+                item.get("destination"),
                 item.get("status"),
-                aggregate_status(
-                    modulation_statuses
-                ),
-                difference_status,
-                aggregate_status(
-                    traffic_statuses
-                ),
-                packet_loss,
+                aggregate_status(modulation_statuses),
+                aggregate_status(difference_statuses),
+                aggregate_status(traffic_statuses),
+                latest.get("value"),
+                history.get("max"),
+                history.get("history_count"),
+                history.get("current_timestamp"),
+                history.get("max_timestamp"),
             ])
 
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-    ):
-
-        for index in (
-            3,
-            4,
-            5,
-            6,
-        ):
-
-            style_status_cell(
-                row[index - 1]
-            )
-
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=3, max_col=6):
+        for cell in row:
+            style_status_cell(cell)
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
+    auto_width(ws)
 
 
-# ============================================================
-# EBand
-# ============================================================
 
 def build_eband(wb: Workbook, result: dict[str, Any]) -> None:
     ws = wb.create_sheet("EBand")
