@@ -4,6 +4,7 @@ from app.rtn import (
     analyze_generic_radio,
     analyze_rtn,
     evaluate_modulation_history,
+    evaluate_packet_loss,
 )
 
 
@@ -127,3 +128,26 @@ def test_eband_retains_capacity_profile_input_without_capacity_health():
     assert slot1["capacity_profile_input"]["value"] == "2486405120"
     assert "capacity" not in slot1
     assert slot1["rx_health"]["status"] == "PASS"
+
+
+
+def test_rtn_packet_loss_metric_and_existing_thresholds_are_preserved():
+    assert evaluate_packet_loss(4.9)["status"] == "PASS"
+    assert evaluate_packet_loss(5)["status"] == "WARNING"
+    assert evaluate_packet_loss(80)["status"] == "WARNING"
+    assert evaluate_packet_loss(81)["status"] == "CRITICAL"
+    assert evaluate_packet_loss(None)["status"] == "NOT_AVAILABLE"
+
+    items = [{
+        "itemid": "300",
+        "name": "Packet loss",
+        "key_": "packetloss",
+        "value_type": "0",
+        "units": "%",
+        "lastvalue": "6",
+        "lastclock": "1700000000",
+    }]
+    result = analyze_rtn(items, [])
+    assert result["packet_loss"]["value"] == 6
+    assert result["packet_loss"]["units"] == "%"
+    assert result["packet_loss"]["status"] == "WARNING"
