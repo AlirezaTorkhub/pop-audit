@@ -684,7 +684,7 @@ def build_eband(wb: Workbook, result: dict[str, Any]) -> None:
             ws.append([link.get("name"),link.get("zabbix_hostid"),slot.get("slot"),rx.get("value"),rx.get("units"),tx.get("value"),tx.get("units"),slot.get("rx_calloff", {}).get("value"),slot.get("tx_calloff", {}).get("value"),diff.get("value"),diff.get("status"),slot.get("rx_health", {}).get("status"),modulation.get("metric", {}).get("value"),modulation.get("health", {}).get("status"),slot.get("capacity_profile_input", {}).get("value"),slot.get("capacity_profile_input", {}).get("units"),checks.get("interfaces", {}).get("status"),analysis.get("status")])
     style_body(ws, 2, ws.max_row, ws.max_column)
     for row in ws.iter_rows(min_row=2):
-        for index in (11,12,14,16,17,18):
+        for index in (11,12,14,17,18):
             style_status_cell(row[index-1])
     ws.freeze_panes = "A2"
     auto_width(ws)
