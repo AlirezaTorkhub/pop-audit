@@ -1,4 +1,6 @@
-from app.discovery import SiteDiscovery
+import pytest
+
+from app.discovery import SiteDiscovery, normalize_site_code
 
 
 def host(hostid, name, ip, groups):
@@ -109,3 +111,10 @@ def test_missing_required_baseband_group_is_not_reported_as_missing_hardware():
     assert [item.status for item in result.basebands] == [
         "NOT_AVAILABLE", "NOT_AVAILABLE"
     ]
+
+
+
+@pytest.mark.parametrize("value", ["123", "12345", "12A4", ""])
+def test_site_code_must_be_exactly_four_digits(value):
+    with pytest.raises(ValueError):
+        normalize_site_code(value)
