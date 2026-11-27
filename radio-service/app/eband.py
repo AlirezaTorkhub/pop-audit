@@ -12,10 +12,14 @@ from .radio_rules import (
 
 
 def to_float(value: Any) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
+    import math
+    if value is None:
         return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def metric_value(item: dict[str, Any] | None) -> float | None:
