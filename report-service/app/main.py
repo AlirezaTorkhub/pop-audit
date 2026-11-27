@@ -39,6 +39,7 @@ STATUS_PRIORITY = {
     "UNKNOWN": 3,
     "NOT_AVAILABLE": 2,
     "PASS": 1,
+    "NOT_EXISTS": 0,
 }
 
 
@@ -48,6 +49,7 @@ STATUS_FILL = {
     "CRITICAL": "FFC7CE",
     "UNKNOWN": "D9E1F2",
     "NOT_AVAILABLE": "E7E6E6",
+    "NOT_EXISTS": "F2F2F2",
 }
 
 
@@ -89,43 +91,18 @@ def aggregate_status(
     )
 
 
-def service_status(
-    result: Any,
-) -> str:
-
-    if not isinstance(
-        result,
-        dict,
-    ):
+def service_status(result: Any) -> str:
+    if not isinstance(result, dict):
         return "UNKNOWN"
-
     status = result.get("status")
-
     if status in STATUS_PRIORITY:
         return status
-
     if status == "COMPLETED":
-
-        data = result.get(
-            "data"
-        )
-
-        if isinstance(data, dict):
-
-            data_status = data.get(
-                "status"
-            )
-
-            if data_status in STATUS_PRIORITY:
-                return data_status
-
-        return "PASS"
-
-    if status == "FAILED":
-        return "CRITICAL"
-
+        data = result.get("data")
+        if isinstance(data, dict) and data.get("status") in STATUS_PRIORITY:
+            return data["status"]
+        return "UNKNOWN"
     return "UNKNOWN"
-
 
 def find_data(
     result: dict[str, Any],
@@ -346,101 +323,44 @@ def build_summary(
     wb: Workbook,
     site_code: str,
     results: dict[str, Any],
+    summary: dict[str, Any] | None = None,
+    audit_status: str | None = None,
 ) -> None:
-
     ws = wb.active
     ws.title = "Summary"
-
-    ws.merge_cells(
-        "A1:F1"
-    )
-
-    ws["A1"] = (
-        f"POP AUDIT REPORT - SITE {site_code}"
-    )
-
-    style_title(
-        ws,
-        "A1:F1",
-    )
-
-    audit_time = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    statuses = {
-        name: service_status(result)
-        for name, result in results.items()
-    }
-
-    overall = aggregate_status(
-        list(
-            statuses.values()
-        )
-    )
-
-    add_kpi(
-        ws,
-        3,
-        "Site Code",
-        site_code,
-    )
-
-    add_kpi(
-        ws,
-        4,
-        "Audit Time",
-        audit_time,
-    )
-
-    add_kpi(
-        ws,
-        5,
-        "Overall Status",
-        overall,
-    )
-
-    style_status_cell(
-        ws["B5"]
-    )
-
-    row = 7
-
-    for service in (
-        "cisco",
-        "ericsson",
-        "radio",
-    ):
-
-        add_kpi(
-            ws,
-            row,
-            service.upper(),
-            statuses.get(
-                service,
-                "NOT_AVAILABLE",
-            ),
-        )
-
-        style_status_cell(
-            ws.cell(
-                row=row,
-                column=2,
-            )
-        )
-
+    ws.merge_cells("A1:F1")
+    ws["A1"] = f"POP AUDIT REPORT - SITE {site_code}"
+    style_title(ws, "A1:F1")
+    audit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    categories = (summary or {}).get("categories") or {}
+    ordered = ("Cisco Switch", "BB1", "BB2", "NCS 540", "EBand", "Huawei RTN", "Intracom", "NRay")
+    applicable = [categories.get(name, "UNKNOWN") for name in ordered if categories.get(name, "NOT_EXISTS") != "NOT_EXISTS"]
+    overall = audit_status or aggregate_status(applicable)
+    add_kpi(ws, 3, "Site Code", site_code)
+    add_kpi(ws, 4, "Audit Time", audit_time)
+    add_kpi(ws, 5, "Overall Status", overall)
+    style_status_cell(ws["B5"])
+    ws["A7"] = "POP COMPONENT"
+    ws["B7"] = "STATUS"
+    style_header(ws, 7)
+    row = 8
+    for name in ordered:
+        ws.cell(row=row, column=1, value=name)
+        ws.cell(row=row, column=2, value=categories.get(name, "UNKNOWN"))
+        style_status_cell(ws.cell(row=row, column=2))
         row += 1
-
-    ws.freeze_panes = "A3"
-
-    auto_width(
-        ws
-    )
-
-
-# ============================================================
-# Devices
-# ============================================================
+    row += 1
+    ws.cell(row=row, column=1, value="SERVICE")
+    ws.cell(row=row, column=2, value="STATUS")
+    style_header(ws, row)
+    row += 1
+    for name in ("cisco", "ericsson", "radio"):
+        ws.cell(row=row, column=1, value=name.upper())
+        ws.cell(row=row, column=2, value=service_status(results.get(name)))
+        style_status_cell(ws.cell(row=row, column=2))
+        row += 1
+    ws.freeze_panes = "A8"
+    auto_width(ws)
 
 def build_devices(
     wb: Workbook,
@@ -548,127 +468,26 @@ def build_devices(
 # Cisco
 # ============================================================
 
-def build_cisco(
-    wb: Workbook,
-    result: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "Cisco"
-    )
-
-    ws.append([
-        "Hostname",
-        "IP",
-        "Interface",
-        "Description",
-        "Status",
-        "Admin/Oper",
-        "Speed",
-        "Duplex",
-        "CRC",
-        "Input Errors",
-        "Output Errors",
-        "Output Drops",
-        "Health Reason",
-    ])
-
-    style_header(
-        ws,
-        1,
-    )
-
-    data = find_data(
-        result
-    )
-
-    for device in data.get(
-        "results",
-        [],
-    ):
-
-        checks = device.get(
-            "checks",
-            {}
-        )
-
-        interface_check = checks.get(
-            "interfaces",
-            {}
-        )
-
-        interfaces = interface_check.get(
-            "data",
-            []
-        )
-
+def build_cisco(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Cisco Switches")
+    ws.append(["Hostname","IP","Zabbix Host ID","Interface","Description","Status","Admin/Oper","Speed","Duplex","CRC","Input Errors","Output Errors","Output Drops","Health Reason"])
+    style_header(ws, 1)
+    data = find_data(result)
+    devices = data.get("switches")
+    if not isinstance(devices, list):
+        devices = [d for d in data.get("results", []) if str(d.get("device_type", "")).lower() != "ncs540"]
+    for device in devices:
+        interfaces = device.get("checks", {}).get("interfaces", {}).get("data", [])
         if not interfaces:
-
-            ws.append([
-                device.get("hostname"),
-                device.get("ip"),
-                None,
-                None,
-                device.get("status"),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ])
-
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),None,None,device.get("status"),None,None,None,None,None,None,None,device.get("message") or device.get("error")])
             continue
-
         for item in interfaces:
-
-            ws.append([
-                device.get("hostname"),
-                device.get("ip"),
-                item.get("interface"),
-                item.get("description"),
-                item.get("health"),
-                (
-                    f'{item.get("status_raw")} / '
-                    f'{item.get("protocol") or ""}'
-                ),
-                item.get("speed"),
-                item.get("duplex"),
-                item.get("crc"),
-                item.get("input_errors"),
-                item.get("output_errors"),
-                item.get("output_drops"),
-                item.get("health_reason"),
-            ])
-
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-        min_col=5,
-        max_col=5,
-    ):
-        style_status_cell(
-            row[0]
-        )
-
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),item.get("interface"),item.get("description"),item.get("health"),f'{item.get("status_raw") or ""} / {item.get("protocol") or ""}',item.get("speed"),item.get("duplex"),item.get("crc"),item.get("input_errors"),item.get("output_errors"),item.get("output_drops"),item.get("health_reason")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=6, max_col=6):
+        style_status_cell(row[0])
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
-
-
-# ============================================================
-# Ericsson
-# ============================================================
+    auto_width(ws)
 
 def build_ericsson(
     wb: Workbook,
@@ -1119,271 +938,64 @@ def build_rtn(
 # EBand
 # ============================================================
 
-def build_eband(
-    wb: Workbook,
-    result: dict[str, Any],
-) -> None:
-
-    ws = wb.create_sheet(
-        "EBand"
-    )
-
-    ws.append([
-        "Radio Host",
-        "Slot",
-        "RX",
-        "TX",
-        "RX Calloff",
-        "TX Calloff",
-        "Calculated Difference",
-        "Zabbix Difference",
-        "Capacity",
-        "RX Modulation",
-        "RX Health",
-        "Capacity Health",
-        "Modulation Health",
-        "Interface Status",
-        "Overall Status",
-    ])
-
-    style_header(
-        ws,
-        1,
-    )
-
-    data = find_data(
-        result
-    )
-
-    for link in data.get(
-        "links",
-        [],
-    ):
-
-        if str(
-            link.get(
-                "link_type",
-                ""
-            )
-        ).upper() != "EBAND":
-
+def build_eband(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("EBand")
+    ws.append(["Radio Host","Zabbix Host ID","Slot","RX","RX Units","TX","TX Units","RX Calloff","TX Calloff","Calculated Difference","Difference Status","RX Status","RX Modulation","Modulation Status","Interface Status","Overall Status"])
+    style_header(ws, 1)
+    data = find_data(result)
+    for link in data.get("links", []):
+        if str(link.get("link_type", "")).upper() != "EBAND":
             continue
-
-        analysis = link.get(
-            "analysis",
-            {}
-        )
-
-        checks = analysis.get(
-            "checks",
-            {}
-        )
-
-        difference = checks.get(
-            "difference",
-            {}
-        )
-
-        slots = difference.get(
-            "slots",
-            []
-        )
-
-        for slot_data in slots:
-
-            rx = slot_data.get(
-                "rx",
-                {}
-            )
-
-            tx = slot_data.get(
-                "tx",
-                {}
-            )
-
-            rx_calloff = slot_data.get(
-                "rx_calloff",
-                {}
-            )
-
-            tx_calloff = slot_data.get(
-                "tx_calloff",
-                {}
-            )
-
-            diff = slot_data.get(
-                "difference",
-                {}
-            )
-
-            zabbix_diff = slot_data.get(
-                "zabbix_difference",
-                {}
-            )
-
-            capacity = slot_data.get(
-                "capacity",
-                {}
-            )
-
-            modulation = slot_data.get(
-                "rx_modulation",
-                {}
-            )
-
-            interfaces = checks.get(
-                "interfaces",
-                {}
-            )
-
-            ws.append([
-                link.get("name"),
-                slot_data.get("slot"),
-                rx.get("value"),
-                tx.get("value"),
-                rx_calloff.get("value"),
-                tx_calloff.get("value"),
-                diff.get("value"),
-                zabbix_diff.get("value"),
-                capacity.get(
-                    "metric",
-                    {}
-                ).get("value"),
-                modulation.get(
-                    "metric",
-                    {}
-                ).get("value"),
-                slot_data.get(
-                    "rx_health",
-                    {}
-                ).get("status"),
-                capacity.get(
-                    "health",
-                    {}
-                ).get("status"),
-                modulation.get(
-                    "health",
-                    {}
-                ).get("status"),
-                interfaces.get(
-                    "status"
-                ),
-                analysis.get(
-                    "status"
-                ),
-            ])
-
-    style_body(
-        ws,
-        2,
-        ws.max_row,
-        ws.max_column,
-    )
-
-    for row in ws.iter_rows(
-        min_row=2,
-    ):
-
-        for index in (
-            11,
-            12,
-            13,
-            14,
-            15,
-        ):
-
-            style_status_cell(
-                row[index - 1]
-            )
-
+        analysis = link.get("analysis", {})
+        checks = analysis.get("checks", {})
+        for slot in checks.get("difference", {}).get("slots", []):
+            rx, tx = slot.get("rx", {}), slot.get("tx", {})
+            modulation = slot.get("rx_modulation", {})
+            diff = slot.get("difference", {})
+            ws.append([link.get("name"),link.get("zabbix_hostid"),slot.get("slot"),rx.get("value"),rx.get("units"),tx.get("value"),tx.get("units"),slot.get("rx_calloff", {}).get("value"),slot.get("tx_calloff", {}).get("value"),diff.get("value"),diff.get("status"),slot.get("rx_health", {}).get("status"),modulation.get("metric", {}).get("value"),modulation.get("health", {}).get("status"),checks.get("interfaces", {}).get("status"),analysis.get("status")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2):
+        for index in (11,12,14,15,16):
+            style_status_cell(row[index-1])
     ws.freeze_panes = "A2"
-
-    auto_width(
-        ws
-    )
-
-
-# ============================================================
-# Workbook generation
-# ============================================================
+    auto_width(ws)
 
 def create_workbook(
     site_code: str,
     results: dict[str, Any],
+    discovery: dict[str, Any] | None = None,
+    summary: dict[str, Any] | None = None,
+    audit_status: str | None = None,
 ) -> tuple[Path, str]:
-
     wb = Workbook()
-
-    build_summary(
-        wb,
-        site_code,
-        results,
-    )
-
-    build_devices(
-        wb,
-        results,
-    )
-
+    build_summary(wb, site_code, results, summary, audit_status)
+    build_devices(wb, results)
+    if discovery:
+        build_basebands(wb, discovery, results.get("ericsson", {}))
     if "cisco" in results:
-        build_cisco(
-            wb,
-            results["cisco"],
-        )
-
+        build_cisco(wb, results["cisco"])
+        build_ncs(wb, results["cisco"])
+        build_crc_problems(wb, results["cisco"])
     if "ericsson" in results:
-        build_ericsson(
-            wb,
-            results["ericsson"],
-        )
-
+        build_ericsson(wb, results["ericsson"])
     if "radio" in results:
+        build_rtn(wb, results["radio"])
+        build_eband(wb, results["radio"])
+        build_links(wb, results["radio"])
 
-        build_rtn(
-            wb,
-            results["radio"],
-        )
-
-        build_eband(
-            wb,
-            results["radio"],
-        )
-
-    timestamp = datetime.now().strftime(
-        "%Y%m%d-%H%M%S"
-    )
-
-    safe_site = re.sub(
-        r"[^A-Za-z0-9_-]",
-        "_",
-        site_code,
-    )
-
-    filename = (
-        f"POP-Audit-{safe_site}-"
-        f"{timestamp}.xlsx"
-    )
-
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe_site = re.sub(r"[^A-Za-z0-9_-]", "_", site_code)
+    filename = f"POP-Audit-{safe_site}-{timestamp}.xlsx"
     output = REPORT_DIR / filename
+    wb.save(output)
 
-    wb.save(
-        output
+    categories = (summary or {}).get("categories") or {}
+    applicable = [value for value in categories.values() if value != "NOT_EXISTS"]
+    overall = audit_status or (
+        aggregate_status(applicable) if categories
+        else aggregate_status([service_status(result) for result in results.values()])
     )
-
-    overall = aggregate_status(
-        [
-            service_status(result)
-            for result in results.values()
-        ]
-    )
-
     return output, overall
-
-
-# ============================================================
-# API
-# ============================================================
-
 @app.get("/health")
 def health():
     return {
@@ -1429,6 +1041,9 @@ def generate_report(
         output, overall = create_workbook(
             site_code,
             results,
+            payload.get("discovery") or {},
+            payload.get("summary") or {},
+            payload.get("audit_status"),
         )
 
     except Exception as exc:
@@ -1478,3 +1093,110 @@ def download_report(
             "spreadsheetml.sheet"
         ),
     )
+
+def build_basebands(wb: Workbook, discovery: dict[str, Any], ericsson_result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Basebands")
+    ws.append(["Slot","Exists","Hostname","IP","Zabbix Host ID","Status","LT All","Cell Status","Cell Count","Alarm Status","Relevant Alarms","Clock Status","Clock State","Clock Value","Reason"])
+    style_header(ws, 1)
+    data = find_data(ericsson_result)
+    checks_by_host = {str(d.get("zabbix_hostid")): d for d in data.get("results", []) if d.get("zabbix_hostid")}
+    for bb in discovery.get("basebands", []):
+        device = checks_by_host.get(str(bb.get("zabbix_hostid") or ""), {})
+        checks = device.get("checks", {})
+        cells, alarms, clock = checks.get("cells", {}), checks.get("alarms", {}), checks.get("clock", {})
+        ws.append([bb.get("name"),bb.get("exists"),bb.get("hostname"),bb.get("ip"),bb.get("zabbix_hostid"),device.get("status") or bb.get("status") or "UNKNOWN",checks.get("lt_all", {}).get("status"),cells.get("status"),cells.get("count"),alarms.get("status"),alarms.get("relevant_count"),clock.get("status"),clock.get("state"),clock.get("value"),bb.get("reason") or device.get("error") or device.get("message")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2):
+        for index in (6,7,8,10,12):
+            style_status_cell(row[index-1])
+    ws.freeze_panes = "A2"
+    auto_width(ws)
+
+
+def build_ncs(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("NCS 540")
+    ws.append(["Hostname","IP","Zabbix Host ID","Interface","Description","Health","Line State","Protocol","CRC","Input Errors","Output Errors","Health Reason"])
+    style_header(ws, 1)
+    data = find_data(result)
+    devices = data.get("ncs_devices")
+    if not isinstance(devices, list):
+        devices = [d for d in data.get("results", []) if str(d.get("device_type", "")).lower() == "ncs540"]
+    for device in devices:
+        interfaces = device.get("checks", {}).get("interfaces", {}).get("data", [])
+        if not interfaces:
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),None,None,device.get("status"),None,None,None,None,None,device.get("message") or device.get("error")])
+            continue
+        for item in interfaces:
+            ws.append([device.get("hostname"),device.get("ip"),device.get("zabbix_hostid"),item.get("interface"),item.get("description"),item.get("health"),item.get("line_state"),item.get("protocol"),item.get("crc"),item.get("input_errors"),item.get("output_errors"),item.get("health_reason")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=6, max_col=6):
+        style_status_cell(row[0])
+    ws.freeze_panes = "A2"
+    auto_width(ws)
+
+
+def build_crc_problems(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("CRC Problems")
+    ws.append(["Device Type","Hostname","IP","Interface","CRC","Description"])
+    style_header(ws, 1)
+    data = find_data(result)
+    for device in data.get("results", []):
+        for item in device.get("checks", {}).get("interfaces", {}).get("data", []):
+            crc = item.get("crc")
+            if isinstance(crc, (int, float)) and crc > 0:
+                ws.append([str(device.get("device_type") or "Cisco").upper(),device.get("hostname"),device.get("ip"),item.get("interface"),crc,item.get("description")])
+    for device in data.get("ncs_devices", []):
+        for item in device.get("checks", {}).get("interfaces", {}).get("data", []):
+            crc = item.get("crc")
+            if isinstance(crc, (int, float)) and crc > 0:
+                ws.append(["NCS540",device.get("hostname"),device.get("ip"),item.get("interface"),crc,item.get("description")])
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    ws.freeze_panes = "A2"
+    auto_width(ws)
+
+
+def build_links(wb: Workbook, result: dict[str, Any]) -> None:
+    ws = wb.create_sheet("Links")
+    ws.append(["Radio Type","Link","Source Site","Destination","Zabbix Host ID","Link Status","Metric","Item Key","Value","Units","Timestamp","Metric Status","History Count","History Maximum","Maximum Timestamp","Trigger Status","Trigger Details","Reason"])
+    style_header(ws, 1)
+    data = find_data(result)
+    for link in data.get("links", []):
+        radio_type = str(link.get("link_type") or link.get("type") or "UNKNOWN").upper()
+        analysis = link.get("analysis", {})
+        base = [radio_type,link.get("name"),link.get("source_site"),link.get("destination_name") or link.get("destination_site"),link.get("zabbix_hostid"),link.get("status")]
+        rows = []
+        def add_metric(label, metric, status=None, reason=None):
+            metric = metric if isinstance(metric, dict) else {}
+            history = metric.get("history", {}) if isinstance(metric.get("history"), dict) else {}
+            trigger = metric.get("trigger_health", {}) if isinstance(metric.get("trigger_health"), dict) else {}
+            rows.append(base + [label,metric.get("key"),metric.get("value",metric.get("raw_value")),metric.get("units",""),metric.get("clock"),status or metric.get("status"),history.get("history_count"),history.get("max"),history.get("max_timestamp"),trigger.get("status"),json.dumps(trigger.get("triggers",[]),ensure_ascii=False),reason or metric.get("reason") or history.get("reason")])
+        if radio_type == "EBAND":
+            checks=analysis.get("checks",{})
+            for slot in checks.get("difference",{}).get("slots",[]):
+                ix=slot.get("slot")
+                for field in ("rx","tx","rx_calloff","tx_calloff","zabbix_difference"):
+                    add_metric(f"Slot {ix} {field.upper()}",slot.get(field,{}))
+                diff=slot.get("difference",{})
+                add_metric(f"Slot {ix} Difference",{"value":diff.get("value"),"units":"dB","status":diff.get("status"),"reason":diff.get("reason")})
+                add_metric(f"Slot {ix} RX Health",{"value":slot.get("rx",{}).get("value"),"units":slot.get("rx",{}).get("units"),"status":slot.get("rx_health",{}).get("status"),"reason":slot.get("rx_health",{}).get("reason")})
+                mod=slot.get("rx_modulation",{})
+                add_metric(f"Slot {ix} RX Modulation",mod.get("metric",{}),mod.get("health",{}).get("status"),mod.get("health",{}).get("reason"))
+        elif radio_type == "RTN":
+            for field,label in (("modulation","Huawei Modulation"),("difference","RX/TX Difference"),("traffic","Traffic")):
+                for metric in analysis.get(field,[]) if isinstance(analysis.get(field),list) else []:
+                    add_metric(label,metric)
+        else:
+            for metric in analysis.get("metrics",[]):
+                add_metric(radio_type+" Metric",metric)
+        if not rows:
+            rows.append(base+["No metric returned",None,None,None,None,None,None,None,None,None,analysis.get("reason")])
+        for row in rows:
+            ws.append(row)
+    style_body(ws, 2, ws.max_row, ws.max_column)
+    for row in ws.iter_rows(min_row=2, min_col=6, max_col=6):
+        style_status_cell(row[0])
+    for row in ws.iter_rows(min_row=2, min_col=12, max_col=12):
+        style_status_cell(row[0])
+    ws.freeze_panes = "A2"
+    auto_width(ws, 48)
+
