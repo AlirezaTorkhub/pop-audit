@@ -681,7 +681,9 @@ def parse_logging(output: str, recent_limit: int = 10) -> dict[str, Any]:
         severity_counts[key] for key in ("EMERGENCY", "ALERT", "CRITICAL", "ERROR")
     )
     warning_count = severity_counts["WARNING"]
-    status = "CRITICAL" if critical_count else ("WARNING" if warning_count else "PASS")
+    status = "CRITICAL" if critical_count else (
+        "WARNING" if warning_count else ("PASS" if meaningful else "UNKNOWN")
+    )
     return {
         "status": status,
         "severity_counts": severity_counts,
@@ -698,8 +700,7 @@ def parse_logging(output: str, recent_limit: int = 10) -> dict[str, Any]:
 def parse_environment(command_outputs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     candidates = (
         "show environment temp status",
-        "show environment temp status",
-    "show env temperature status",
+        "show env temperature status",
         "show environment summary",
         "show environment status",
         "show environment",
@@ -751,6 +752,7 @@ COMMANDS = [
     "show interfaces description",
     "show interfaces",
     "show logging",
+    "show environment temp status",
     "show environment",
     "show env temperature status",
     "show environment status",
@@ -925,7 +927,7 @@ def audit_device(
             input_errors = item.get("input_errors")
             output_errors = item.get("output_errors")
 
-            if crc > 0:
+            if isinstance(crc, (int, float)) and crc > 0:
                 item["health"] = aggregate_status(
                     [
                         item.get(
@@ -1143,7 +1145,8 @@ def audit_ncs_device(device: dict[str, Any]) -> dict[str, Any]:
             raw_state = str(detail.get("line_state") or "").lower()
             protocol = str(detail.get("protocol") or "").lower()
             status_raw = "up" if raw_state == "up" and protocol in ("up", "") else (
-                "down" if raw_state else "unknown"
+                "disabled" if raw_state in ("administratively down", "admin down")
+                else ("down" if raw_state else "unknown")
             )
             merged = {
                 "interface": name,
