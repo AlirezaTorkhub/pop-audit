@@ -636,7 +636,7 @@ function renderRadio(wrapper) {
                 <td>${escapeHtml(metric.value ?? metric.raw_value)}</td>
                 <td>${escapeHtml(metric.units)}</td>
                 <td>${escapeHtml(metric.clock || metric.lastclock)}</td>
-                <td>${statusSpan(metric.status)}</td>
+                <td>${metric.status ? statusSpan(metric.status) : "—"}</td>
                 <td>${escapeHtml(history.max)}</td>
                 <td>${escapeHtml(history.history_count)}</td>
             </tr>`;
