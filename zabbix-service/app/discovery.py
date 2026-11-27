@@ -1,703 +1,422 @@
+from __future__ import annotations
+
 import os
 import re
+from typing import Any, Iterable
 
 from dotenv import load_dotenv
 
 from .client import ZabbixClient
-from .models import (
-    Baseband,
-    Device,
-    DiscoveryResult,
-    Interface,
-    RadioLink,
-)
+from .models import Baseband, Device, DiscoveryResult, Interface, RadioLink
+
+load_dotenv("/opt/pop-audit/config/.env", override=False)
+
+_TOKEN_IGNORES = {
+    "lte", "bh", "backhaul", "th", "tth", "alb", "sw", "switch",
+    "ncs", "ncs540", "agg", "aggregation", "asr", "router", "rtr",
+    "cisco", "mikrotik", "mikro", "enodeb", "nodeb", "baseband",
+    "huawei", "rtn", "eband", "intracom", "intracome", "introcom",
+    "nray", "nrays", "n", "to", "from", "radio", "link", "lte",
+}
 
 
-load_dotenv(
-    "/opt/pop-audit/config/.env"
-)
-
-
-def normalize_site_code(
-    site_code: str,
-) -> str:
-
-    value = str(
-        site_code
-    ).strip()
-
-    if not value.isdigit():
-
-        raise ValueError(
-            "Site code must contain digits only."
-        )
-
+def normalize_site_code(site_code: str) -> str:
+    value = str(site_code or "").strip()
+    if not value or not value.isdigit():
+        raise ValueError("Site code must contain digits only.")
     return value
 
 
-def related_site_codes(
-    site_code: str,
-) -> set[str]:
-
-    site_code = normalize_site_code(
-        site_code
-    )
-
-    return {
-        site_code,
-        f"7{site_code}",
-        f"8{site_code}",
-    }
+def extract_numeric_tokens(text: str) -> list[str]:
+    return re.findall(r"(?<!\d)\d+(?!\d)", text or "")
 
 
-def extract_numeric_tokens(
-    text: str,
-) -> list[str]:
-
-    return re.findall(
-        r"(?<!\d)\d+(?!\d)",
-        text or "",
-    )
+def extract_baseband_ids(text: str) -> set[str]:
+    return set(re.findall(r"(?<!\d)\d{4}(?!\d)", text or ""))
 
 
-def contains_site_code(
-    text: str,
-    site_codes: set[str],
-) -> bool:
-
-    tokens = extract_numeric_tokens(
-        text
-    )
-
-    return any(
-        token in site_codes
-        for token in tokens
-    )
+def contains_site_code(text: str, site_codes: set[str]) -> bool:
+    return any(token in site_codes for token in extract_numeric_tokens(text))
 
 
-def get_primary_interface(
-    host: dict,
-) -> Interface | None:
-
-    interfaces = host.get(
-        "interfaces",
-        [],
-    )
-
+def get_primary_interface(host: dict[str, Any]) -> Interface | None:
+    interfaces = host.get("interfaces") or []
     if not interfaces:
         return None
-
-    main_interfaces = [
-        item
-        for item in interfaces
-        if str(
-            item.get("main")
-        ) == "1"
-    ]
-
-    selected = (
-        main_interfaces[0]
-        if main_interfaces
-        else interfaces[0]
-    )
-
-    return Interface(
-        **selected
-    )
+    main = [item for item in interfaces if str(item.get("main")) == "1"]
+    selected = main[0] if main else interfaces[0]
+    return Interface(**selected)
 
 
-def get_group_names(
-    host: dict,
-) -> list[str]:
+def get_group_names(host: dict[str, Any]) -> list[str]:
+    return [item["name"] for item in host.get("groups", []) if item.get("name")]
 
+
+def get_template_names(host: dict[str, Any]) -> list[str]:
     return [
         item["name"]
-        for item in host.get(
-            "groups",
-            []
-        )
+        for item in host.get("parentTemplates", [])
         if item.get("name")
     ]
 
 
-def get_template_names(
-    host: dict,
-) -> list[str]:
-
-    return [
-        item["name"]
-        for item in host.get(
-            "parentTemplates",
-            []
-        )
-        if item.get("name")
-    ]
+def _inventory_text(host: dict[str, Any]) -> str:
+    inventory = host.get("inventory") or {}
+    if not isinstance(inventory, dict):
+        return ""
+    return " ".join(str(value) for value in inventory.values() if value)
 
 
-def detect_device_type(
-    host: dict,
-) -> tuple[str, str]:
+def detect_device_type(host: dict[str, Any]) -> tuple[str, str]:
+    hostname = " ".join((host.get("host", ""), host.get("name", ""))).lower()
+    templates = " ".join(get_template_names(host)).lower()
+    groups = " ".join(get_group_names(host)).lower()
+    inventory = _inventory_text(host).lower()
+    evidence = " ".join((hostname, templates, groups, inventory))
 
-    hostname = (
-        host.get(
-            "name",
-            ""
-        )
-        .lower()
+    if "mikrotik" in evidence or "mikro tik" in evidence:
+        return "MikroTik", "router"
+
+    cisco_evidence = (
+        "cisco" in templates
+        or "cisco" in inventory
+        or re.search(r"\b(?:cisco|asr|ncs(?:\s|-)?540|ncs\d{3})\b", hostname)
+        or re.search(r"(?:^|[-_])(?:th|tth|alb)?[-_]?bh[-_](?:sw|rtr|ncs)(?:[-_]|$)", hostname)
     )
+    if not cisco_evidence:
+        return "Unknown", "network-device"
 
-    templates = [
+    if re.search(r"\bncs\s*540\b|\bncs540\b|(?:^|[-_])ncs(?:[-_]|$)", evidence):
+        return "Cisco", "ncs540"
+    if re.search(r"\basr(?:-\d+)?\b", evidence):
+        return "Cisco", "router"
+    return "Cisco", "switch"
+
+
+def _words(text: str) -> set[str]:
+    values = re.findall(r"[A-Za-z][A-Za-z0-9]+", text or "")
+    return {
         value.lower()
-        for value in get_template_names(
-            host
-        )
-    ]
-
-    groups = [
-        value.lower()
-        for value in get_group_names(
-            host
-        )
-    ]
-
-    # ---------------------------------------------------------
-    # Strongest signal: explicit Cisco template
-    # ---------------------------------------------------------
-
-    if any(
-        "cisco" in template
-        for template in templates
-    ):
-
-        if any(
-            x in hostname
-            for x in [
-                "ncs",
-            ]
-        ):
-
-            return (
-                "Cisco",
-                "ncs",
-            )
-
-        if any(
-            x in hostname
-            for x in [
-                "asr",
-            ]
-        ):
-
-            return (
-                "Cisco",
-                "router",
-            )
-
-        return (
-            "Cisco",
-            "switch",
-        )
-
-    # ---------------------------------------------------------
-    # Group based signal
-    # ---------------------------------------------------------
-
-    if any(
-        "switch" in group
-        for group in groups
-    ):
-
-        return (
-            "Cisco",
-            "switch",
-        )
-
-    # ---------------------------------------------------------
-    # Hostname based fallback
-    # ---------------------------------------------------------
-
-    if "3750" in hostname:
-        return (
-            "Cisco",
-            "switch",
-        )
-
-    if "asr" in hostname:
-        return (
-            "Cisco",
-            "router",
-        )
-
-    if "ncs" in hostname:
-        return (
-            "Cisco",
-            "ncs",
-        )
-
-    return (
-        "Unknown",
-        "network-device",
-    )
-
-
-def infer_radio_type(
-    name: str,
-) -> str:
-
-    value = (
-        name
-        .lower()
-    )
-
-    if "eband" in value:
-        return "EBand"
-
-    if "rtn" in value:
-        return "RTN"
-
-    if "intracome" in value:
-        return "Intracome"
-
-    if "nrays" in value:
-        return "NRays"
-
-    # Current real-world naming example:
-    #
-    # ...-980A-Huawei
-    #
-    # Treat Huawei radio naming as RTN
-    # provisionally.
-    #
-    # This can be refined later using
-    # Zabbix items/templates.
-
-    if "huawei" in value:
-        return "RTN"
-
-    return "Unknown"
-
-
-def split_link_name(
-    name: str,
-):
-
-    value = (
-        name
-        .replace("→", "->")
-    )
-
-    separators = [
-        "->",
-        "-to-",
-        " to ",
-    ]
-
-    lower = value.lower()
-
-    for separator in separators:
-
-        position = lower.find(
-            separator
-        )
-
-        if position == -1:
-            continue
-
-        left = value[
-            :position
-        ].strip(
-            " -"
-        )
-
-        right = value[
-            position
-            + len(separator):
-        ].strip(
-            " -"
-        )
-
-        return (
-            left,
-            right,
-        )
-
-    return (
-        None,
-        None,
-    )
-
-
-def parse_direction(
-    name: str,
-    site_code: str,
-):
-
-    left, right = split_link_name(
-        name
-    )
-
-    if not left or not right:
-        return (
-            None,
-            None,
-            None,
-        )
-
-    site_codes = {
-        site_code,
+        for value in values
+        if len(value) > 2 and value.lower() not in _TOKEN_IGNORES
     }
 
-    left_codes = extract_numeric_tokens(
-        left
+
+def location_tokens(host: dict[str, Any]) -> set[str]:
+    # A location identifier is a meaningful hostname/inventory token,
+    # not a POP number or device-role prefix.
+    text = " ".join((
+        host.get("host", ""),
+        host.get("name", ""),
+        host.get("description", ""),
+        _inventory_text(host),
+    ))
+    return _words(text)
+
+
+def infer_radio_type(host: dict[str, Any]) -> str:
+    name = " ".join((
+        host.get("host", ""),
+        host.get("name", ""),
+        " ".join(get_group_names(host)),
+        " ".join(get_template_names(host)),
+        _inventory_text(host),
+    )).lower()
+
+    groups = {x.lower() for x in get_group_names(host)}
+    templates = " ".join(get_template_names(host)).lower()
+
+    # Explicit Zabbix group/template evidence is stronger than aliases.
+    if any("radio-huawei" in group for group in groups):
+        return "RTN"
+    if "huawei rtn" in templates or "rtn huawei" in templates:
+        return "RTN"
+
+    if "eband" in name or "e-band" in name:
+        return "EBAND"
+    if re.search(r"\b(?:rtn|huawei)\b", name):
+        return "RTN"
+    compact = re.sub(r"[^a-z0-9]", "", name)
+    if any(alias in compact for alias in ("intracom", "intracome", "introcom")):
+        return "INTRACOM"
+    if re.search(r"\bn[\s-]?rays?\b", name) or "nray" in compact:
+        return "NRAY"
+
+    return "UNKNOWN"
+
+
+def split_link_name(name: str) -> tuple[str | None, str | None]:
+    value = (name or "").replace("→", "->")
+    separators = ("->", "-to-", " to ")
+    lower = value.lower()
+    for separator in separators:
+        position = lower.find(separator)
+        if position < 0:
+            continue
+        left = value[:position].strip(" -_")
+        right = value[position + len(separator):].strip(" -_")
+        if left and right:
+            return left, right
+    return None, None
+
+
+def parse_direction(name: str, site_code: str) -> tuple[str | None, str | None, str | None]:
+    left, right = split_link_name(name)
+    if not left or not right:
+        return None, None, None
+
+    left_tokens = extract_numeric_tokens(left)
+    source = next((token for token in left_tokens if token == site_code), None)
+    if source is None:
+        return None, None, None
+
+    destination_tokens = extract_numeric_tokens(right)
+    destination = next((token for token in destination_tokens if token != site_code), None)
+    return source, destination, right
+
+
+def _host_text(host: dict[str, Any]) -> str:
+    return " ".join((host.get("host", ""), host.get("name", "")))
+
+
+def _unique_hosts(hosts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    for host in hosts:
+        host_id = str(host.get("hostid") or "")
+        if host_id:
+            by_id.setdefault(host_id, host)
+    return list(by_id.values())
+
+
+def _device_from_host(host: dict[str, Any], device_type: str | None = None) -> Device:
+    interface = get_primary_interface(host)
+    vendor, detected_type = detect_device_type(host)
+    return Device(
+        hostname=host.get("name") or host.get("host") or "Unknown",
+        ip=interface.ip if interface else None,
+        vendor=vendor,
+        device_type=device_type or detected_type,
+        role="network",
+        zabbix_hostid=str(host["hostid"]),
+        groups=get_group_names(host),
+        templates=get_template_names(host),
+        description=host.get("description") or "",
     )
 
-    right_codes = extract_numeric_tokens(
-        right
+
+def _baseband_from_host(host: dict[str, Any], slot: str) -> Baseband:
+    interface = get_primary_interface(host)
+    return Baseband(
+        name=slot,
+        exists=True,
+        status="UNKNOWN",
+        hostname=host.get("name") or host.get("host") or "Unknown",
+        ip=interface.ip if interface else None,
+        zabbix_hostid=str(host["hostid"]),
+        groups=get_group_names(host),
+        templates=get_template_names(host),
     )
 
-    source = next(
-        (
-            code
-            for code in left_codes
-            if code in site_codes
-        ),
-        None,
-    )
 
-    destination = next(
-        (
-            code
-            for code in right_codes
-            if code != site_code
-        ),
-        None,
-    )
-
-    return (
-        source,
-        destination,
-        right,
+def _missing_baseband(slot: str, status: str = "NOT_EXISTS", reason: str | None = None) -> Baseband:
+    return Baseband(
+        name=slot,
+        exists=False,
+        status=status,
+        hostname=None,
+        ip=None,
+        zabbix_hostid=None,
+        groups=[],
+        templates=[],
+        reason=reason,
     )
 
 
 class SiteDiscovery:
-
-    def __init__(self):
-
-        self.client = (
-            ZabbixClient()
+    def __init__(self, client: ZabbixClient | None = None):
+        self.client = client or ZabbixClient()
+        self.enodeb_group = os.getenv("ZABBIX_GROUP_ENODEB", "LTE-Backhaul-eNodeB")
+        self.switch_group = os.getenv("ZABBIX_GROUP_SWITCH", "LTE-Backhaul-Switch")
+        self.switch_aggregation_group = os.getenv(
+            "ZABBIX_GROUP_SWITCH_AGGREGATION",
+            "LTE-Backhaul-Switch-Aggregation",
+        )
+        self.radio_group = os.getenv("ZABBIX_GROUP_RADIO", "LTE-Backhaul-Radio")
+        self.radio_huawei_group = os.getenv(
+            "ZABBIX_GROUP_RADIO_HUAWEI",
+            "LTE-Backhaul-Radio-Huawei",
         )
 
-        self.enodeb_group = os.environ[
-            "ZABBIX_GROUP_ENODEB"
+    def _hosts_for_group(self, group_name: str, errors: list[str]) -> list[dict[str, Any]]:
+        group = self.client.get_group_by_name(group_name)
+        if not group:
+            errors.append(f"Zabbix group not found: {group_name}")
+            return []
+        return _unique_hosts(self.client.get_hosts_by_group(group["groupid"]))
+
+    def _discover_basebands(self, site_code: str, errors: list[str], warnings: list[str]) -> tuple[list[Baseband], list[dict[str, Any]]]:
+        hosts = self._hosts_for_group(self.enodeb_group, errors)
+        candidates: list[tuple[dict[str, Any], set[str]]] = []
+        for host in hosts:
+            ids = extract_baseband_ids(_host_text(host))
+            if ids and any(value.endswith(site_code[-3:]) for value in ids):
+                candidates.append((host, ids))
+
+        exact = [(host, ids) for host, ids in candidates if site_code in ids]
+        alternatives = [
+            (host, ids) for host, ids in candidates
+            if not any(value == site_code for value in ids)
         ]
 
-        self.switch_group = os.environ[
-            "ZABBIX_GROUP_SWITCH"
-        ]
-
-        self.radio_group = os.environ[
-            "ZABBIX_GROUP_RADIO"
-        ]
-
-    def discover(
-        self,
-        site_code: str,
-    ) -> DiscoveryResult:
-
-        site_code = (
-            normalize_site_code(
-                site_code
+        if len(exact) > 1:
+            warnings.append(
+                "Multiple distinct Baseband hosts match the exact Site Code; BB1 is ambiguous."
             )
-        )
+            return [
+                _missing_baseband("BB1", "UNKNOWN", "Ambiguous exact Site Code Baseband candidates."),
+                _missing_baseband("BB2", "NOT_EXISTS"),
+            ], []
 
-        related_codes = (
-            related_site_codes(
-                site_code
-            )
-        )
+        if exact:
+            bb1_host = exact[0][0]
+            bb1 = _baseband_from_host(bb1_host, "BB1")
+            alternatives = [
+                (host, ids) for host, ids in alternatives
+                if str(host.get("hostid")) != str(bb1_host.get("hostid"))
+            ]
+            if len(alternatives) == 1:
+                bb2 = _baseband_from_host(alternatives[0][0], "BB2")
+            elif len(alternatives) > 1:
+                names = sorted(host.get("name") or host.get("host") or "" for host, _ in alternatives)
+                warnings.append("Ambiguous BB2 candidates: " + ", ".join(names))
+                bb2 = _missing_baseband("BB2", "UNKNOWN", "Multiple Baseband candidates share the final three digits.")
+            else:
+                bb2 = _missing_baseband("BB2")
+            return [bb1, bb2], [bb1_host] + ([alternatives[0][0]] if len(alternatives) == 1 else [])
 
-        result = DiscoveryResult(
-            site_code=site_code
-        )
+        if len(candidates) == 1:
+            # Preserve a sole discovered Baseband as BB1 even when its identifier
+            # does not equal the entered Site Code; do not manufacture a BB2.
+            host = candidates[0][0]
+            warnings.append("Exact Site Code Baseband was not found; the sole matching Baseband is retained as BB1.")
+            return [
+                _baseband_from_host(host, "BB1"),
+                _missing_baseband("BB2"),
+            ], [host]
+
+        if len(candidates) > 1:
+            names = sorted(host.get("name") or host.get("host") or "" for host, _ in candidates)
+            warnings.append("Baseband candidates are ambiguous because no exact Site Code match exists: " + ", ".join(names))
+            return [
+                _missing_baseband("BB1", "UNKNOWN", "No unique Baseband candidate could be selected."),
+                _missing_baseband("BB2", "UNKNOWN", "No unique Baseband candidate could be selected."),
+            ], []
+
+        return [
+            _missing_baseband("BB1"),
+            _missing_baseband("BB2"),
+        ], []
+
+    def discover(self, site_code: str) -> DiscoveryResult:
+        site_code = normalize_site_code(site_code)
+        result = DiscoveryResult(site_code=site_code)
 
         self.client.login()
 
-        # =====================================================
-        # ENODEB / BASEBAND
-        # =====================================================
-
-        enodeb_group = (
-            self.client.get_group_by_name(
-                self.enodeb_group
-            )
+        basebands, baseband_hosts = self._discover_basebands(
+            site_code, result.errors, result.warnings
         )
+        result.basebands = basebands
 
-        if not enodeb_group:
-
-            result.errors.append(
-                "Zabbix group not found: "
-                f"{self.enodeb_group}"
-            )
-
-        else:
-
-            hosts = (
-                self.client.get_hosts_by_group(
-                    enodeb_group[
-                        "groupid"
-                    ]
-                )
-            )
-
-            seen = set()
-
-            for host in hosts:
-
-                text = " ".join([
-                    host.get(
-                        "host",
-                        ""
-                    ),
-                    host.get(
-                        "name",
-                        ""
-                    ),
-                ])
-
-                if not contains_site_code(
-                    text,
-                    related_codes,
-                ):
-                    continue
-
-                host_id = host[
-                    "hostid"
-                ]
-
-                if host_id in seen:
-                    continue
-
-                seen.add(
-                    host_id
-                )
-
-                interface = (
-                    get_primary_interface(
-                        host
-                    )
-                )
-
-                result.basebands.append(
-                    Baseband(
-                        hostname=host[
-                            "name"
-                        ],
-                        ip=(
-                            interface.ip
-                            if interface
-                            else None
-                        ),
-                        zabbix_hostid=host_id,
-                        groups=
-                            get_group_names(
-                                host
-                            ),
-                        templates=
-                            get_template_names(
-                                host
-                            ),
-                    )
-                )
-
-        # =====================================================
-        # SWITCH / NETWORK DEVICES
-        # =====================================================
-
-        switch_group = (
-            self.client.get_group_by_name(
-                self.switch_group
-            )
+        switch_hosts = self._hosts_for_group(
+            self.switch_group, result.errors
         )
+        site_switch_hosts: list[dict[str, Any]] = []
+        for host in switch_hosts:
+            if not contains_site_code(_host_text(host), {site_code}):
+                continue
+            vendor, device_type = detect_device_type(host)
+            if vendor != "Cisco" or device_type == "ncs540":
+                continue
+            site_switch_hosts.append(host)
 
-        if not switch_group:
+        site_switch_hosts = _unique_hosts(site_switch_hosts)
+        result.devices = [
+            _device_from_host(host) for host in site_switch_hosts
+        ]
 
-            result.errors.append(
-                "Zabbix group not found: "
-                f"{self.switch_group}"
-            )
+        # The POP identity is inferred from location tokens shared by its
+        # discovered Baseband and site-specific primary switch(es).
+        site_tokens: set[str] = set()
+        bb_tokens = set().union(*(location_tokens(host) for host in baseband_hosts)) if baseband_hosts else set()
+        switch_tokens = set().union(*(location_tokens(host) for host in site_switch_hosts)) if site_switch_hosts else set()
+        shared = bb_tokens & switch_tokens
+        site_tokens.update(shared or bb_tokens or switch_tokens)
+        if site_tokens:
+            result.site_identity = sorted(site_tokens, key=lambda value: (len(value), value))[0]
 
-        else:
-
-            hosts = (
-                self.client.get_hosts_by_group(
-                    switch_group[
-                        "groupid"
-                    ]
-                )
-            )
-
-            seen = set()
-
-            for host in hosts:
-
-                text = " ".join([
-                    host.get(
-                        "host",
-                        ""
-                    ),
-                    host.get(
-                        "name",
-                        ""
-                    ),
-                ])
-
-                # Only requested primary
-                # site code for network devices.
-
-                if not contains_site_code(
-                    text,
-                    {site_code},
-                ):
-                    continue
-
-                host_id = host[
-                    "hostid"
-                ]
-
-                if host_id in seen:
-                    continue
-
-                seen.add(
-                    host_id
-                )
-
-                interface = (
-                    get_primary_interface(
-                        host
-                    )
-                )
-
-                vendor, device_type = (
-                    detect_device_type(
-                        host
-                    )
-                )
-
-                result.devices.append(
-                    Device(
-                        hostname=host[
-                            "name"
-                        ],
-                        ip=(
-                            interface.ip
-                            if interface
-                            else None
-                        ),
-                        vendor=vendor,
-                        device_type=device_type,
-                        role="network",
-                        zabbix_hostid=host_id,
-                        groups=
-                            get_group_names(
-                                host
-                            ),
-                        templates=
-                            get_template_names(
-                                host
-                            ),
-                        description=
-                            host.get(
-                                "description",
-                                ""
-                            ),
-                    )
-                )
-
-        # =====================================================
-        # RADIO
-        # =====================================================
-
-        radio_group = (
-            self.client.get_group_by_name(
-                self.radio_group
-            )
+        ncs_hosts = self._hosts_for_group(
+            self.switch_aggregation_group, result.errors
         )
+        ncs_matches: list[dict[str, Any]] = []
+        for host in ncs_hosts:
+            vendor, device_type = detect_device_type(host)
+            if device_type != "ncs540":
+                # Aggregation group is not, by itself, proof of a Cisco NCS.
+                continue
+            candidate_tokens = location_tokens(host)
+            if site_tokens and candidate_tokens.intersection(site_tokens):
+                ncs_matches.append(host)
 
-        if not radio_group:
+        ncs_matches = _unique_hosts(ncs_matches)
+        if len(ncs_matches) == 1:
+            result.ncs_devices = [
+                _device_from_host(ncs_matches[0], "ncs540")
+            ]
+        elif len(ncs_matches) > 1:
+            names = sorted(host.get("name") or host.get("host") or "" for host in ncs_matches)
+            result.warnings.append(
+                "NCS 540 association is ambiguous for this POP: " + ", ".join(names)
+            )
+        # An empty ncs_devices array means NOT_EXISTS, not a failed Cisco audit.
 
-            result.errors.append(
-                "Zabbix group not found: "
-                f"{self.radio_group}"
+        radio_hosts = []
+        radio_hosts.extend(self._hosts_for_group(self.radio_group, result.errors))
+        radio_hosts.extend(self._hosts_for_group(self.radio_huawei_group, result.errors))
+        radio_hosts = _unique_hosts(radio_hosts)
+
+        for host in radio_hosts:
+            canonical_name = host.get("name") or host.get("host") or ""
+            # Examine both internal host and visible name because Zabbix
+            # sometimes stores the direction in only one of the two fields.
+            parsed = None
+            for candidate_name in (canonical_name, host.get("host", "")):
+                source, destination, destination_name = parse_direction(
+                    candidate_name, site_code
+                )
+                if source == site_code:
+                    parsed = (source, destination, destination_name)
+                    if candidate_name == canonical_name:
+                        break
+            if parsed is None:
+                continue
+
+            source, destination, destination_name = parsed
+            result.radio_links.append(
+                RadioLink(
+                    name=canonical_name,
+                    link_type=infer_radio_type(host),
+                    source_site=source,
+                    destination_site=destination,
+                    destination_name=destination_name,
+                    zabbix_hostid=str(host["hostid"]),
+                    groups=get_group_names(host),
+                    templates=get_template_names(host),
+                )
             )
 
-        else:
-
-            hosts = (
-                self.client.get_hosts_by_group(
-                    radio_group[
-                        "groupid"
-                    ]
-                )
-            )
-
-            seen = set()
-
-            for host in hosts:
-
-                name = (
-                    host.get(
-                        "name"
-                    )
-                    or host.get(
-                        "host"
-                    )
-                )
-
-                (
-                    source,
-                    destination,
-                    destination_name,
-                ) = parse_direction(
-                    name,
-                    site_code,
-                )
-
-                # Only links originating from
-                # requested site.
-
-                if source != site_code:
-                    continue
-
-                host_id = host[
-                    "hostid"
-                ]
-
-                if host_id in seen:
-                    continue
-
-                seen.add(
-                    host_id
-                )
-
-                result.radio_links.append(
-                    RadioLink(
-                        name=name,
-                        link_type=
-                            infer_radio_type(
-                                name
-                            ),
-                        source_site=source,
-                        destination_site=
-                            destination,
-                        destination_name=
-                            destination_name,
-                        zabbix_hostid=
-                            host_id,
-                    )
-                )
-
+        # Keep ordering stable for downstream reports and deterministic tests.
+        result.radio_links.sort(
+            key=lambda item: (item.link_type, item.name.lower(), item.zabbix_hostid)
+        )
         return result
-
-
-
