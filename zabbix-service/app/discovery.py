@@ -256,6 +256,17 @@ class SiteDiscovery:
 
     def _discover_basebands(self, site_code: str, errors: list[str], warnings: list[str]) -> tuple[list[Baseband], list[dict[str, Any]]]:
         hosts = self._hosts_for_group(self.enodeb_group, errors)
+        group_missing = any(
+            message == f"Zabbix group not found: {self.enodeb_group}"
+            for message in errors
+        )
+        if group_missing:
+            reason = f"Required Zabbix group {self.enodeb_group} is unavailable."
+            return [
+                _missing_baseband("BB1", "NOT_AVAILABLE", reason),
+                _missing_baseband("BB2", "NOT_AVAILABLE", reason),
+            ], []
+
         candidates: list[tuple[dict[str, Any], set[str]]] = []
         for host in hosts:
             ids = extract_baseband_ids(_host_text(host))
@@ -265,7 +276,7 @@ class SiteDiscovery:
         exact = [(host, ids) for host, ids in candidates if site_code in ids]
         alternatives = [
             (host, ids) for host, ids in candidates
-            if not any(value == site_code for value in ids)
+            if site_code not in ids
         ]
 
         if len(exact) > 1:
@@ -286,36 +297,33 @@ class SiteDiscovery:
             ]
             if len(alternatives) == 1:
                 bb2 = _baseband_from_host(alternatives[0][0], "BB2")
+                selected = [bb1_host, alternatives[0][0]]
             elif len(alternatives) > 1:
                 names = sorted(host.get("name") or host.get("host") or "" for host, _ in alternatives)
                 warnings.append("Ambiguous BB2 candidates: " + ", ".join(names))
                 bb2 = _missing_baseband("BB2", "UNKNOWN", "Multiple Baseband candidates share the final three digits.")
+                selected = [bb1_host]
             else:
                 bb2 = _missing_baseband("BB2")
-            return [bb1, bb2], [bb1_host] + ([alternatives[0][0]] if len(alternatives) == 1 else [])
+                selected = [bb1_host]
+            return [bb1, bb2], selected
 
-        if len(candidates) == 1:
-            # Preserve a sole discovered Baseband as BB1 even when its identifier
-            # does not equal the entered Site Code; do not manufacture a BB2.
-            host = candidates[0][0]
-            warnings.append("Exact Site Code Baseband was not found; the sole matching Baseband is retained as BB1.")
+        # BB1 is always the exact four-digit Site Code. A 7xxx/8xxx
+        # variant can only populate BB2; it must never be promoted to BB1.
+        bb1 = _missing_baseband("BB1")
+        if len(alternatives) == 1:
+            host = alternatives[0][0]
+            warnings.append("Exact BB1 Site Code was not found; a matching final-three-digit Baseband was discovered as BB2.")
+            return [bb1, _baseband_from_host(host, "BB2")], [host]
+        if len(alternatives) > 1:
+            names = sorted(host.get("name") or host.get("host") or "" for host, _ in alternatives)
+            warnings.append("BB2 candidates are ambiguous: " + ", ".join(names))
             return [
-                _baseband_from_host(host, "BB1"),
-                _missing_baseband("BB2"),
-            ], [host]
-
-        if len(candidates) > 1:
-            names = sorted(host.get("name") or host.get("host") or "" for host, _ in candidates)
-            warnings.append("Baseband candidates are ambiguous because no exact Site Code match exists: " + ", ".join(names))
-            return [
-                _missing_baseband("BB1", "UNKNOWN", "No unique Baseband candidate could be selected."),
-                _missing_baseband("BB2", "UNKNOWN", "No unique Baseband candidate could be selected."),
+                bb1,
+                _missing_baseband("BB2", "UNKNOWN", "Multiple Baseband candidates share the final three digits."),
             ], []
+        return [bb1, _missing_baseband("BB2")], []
 
-        return [
-            _missing_baseband("BB1"),
-            _missing_baseband("BB2"),
-        ], []
 
     def discover(self, site_code: str) -> DiscoveryResult:
         site_code = normalize_site_code(site_code)
@@ -355,9 +363,13 @@ class SiteDiscovery:
         if site_tokens:
             result.site_identity = sorted(site_tokens, key=lambda value: (len(value), value))[0]
 
+        ncs_error_count = len(result.errors)
         ncs_hosts = self._hosts_for_group(
             self.switch_aggregation_group, result.errors
         )
+        if len(result.errors) > ncs_error_count:
+            result.ncs_status = "NOT_AVAILABLE"
+            result.ncs_reason = f"Zabbix group {self.switch_aggregation_group} is unavailable."
         ncs_matches: list[dict[str, Any]] = []
         for host in ncs_hosts:
             vendor, device_type = detect_device_type(host)
@@ -373,12 +385,16 @@ class SiteDiscovery:
             result.ncs_devices = [
                 _device_from_host(ncs_matches[0], "ncs540")
             ]
+            result.ncs_status = "UNKNOWN"  # Pending the live Cisco audit.
+            result.ncs_reason = "A unique NCS 540 candidate was associated by POP location."
         elif len(ncs_matches) > 1:
             names = sorted(host.get("name") or host.get("host") or "" for host in ncs_matches)
+            result.ncs_status = "UNKNOWN"
+            result.ncs_reason = "Ambiguous NCS 540 association: " + ", ".join(names)
             result.warnings.append(
                 "NCS 540 association is ambiguous for this POP: " + ", ".join(names)
             )
-        # An empty ncs_devices array means NOT_EXISTS, not a failed Cisco audit.
+        # No matched NCS remains NOT_EXISTS unless the aggregation group is unavailable.
 
         radio_hosts = []
         radio_hosts.extend(self._hosts_for_group(self.radio_group, result.errors))
