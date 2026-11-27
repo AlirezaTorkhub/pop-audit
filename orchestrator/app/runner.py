@@ -211,17 +211,30 @@ class AuditRunner:
         else:
             ncs_status = discovery.get("ncs_status", "NOT_EXISTS")
 
+        radio_service_failed = (
+            isinstance(results.get("radio"), dict)
+            and results["radio"].get("status") == "FAILED"
+        )
+        discovered_radio = discovery.get("radio_links") or []
         for radio_type, key in (
             ("EBAND", "EBand"),
             ("RTN", "Huawei RTN"),
             ("INTRACOM", "Intracom"),
             ("NRAY", "NRay"),
         ):
-            if not any(
+            returned = any(
                 str(item.get("link_type") or item.get("type") or "").upper() == radio_type
                 for item in links
-            ) and radio_group_missing:
-                by_type[key] = "NOT_AVAILABLE"
+            )
+            discovered = any(
+                str(item.get("link_type") or item.get("type") or "").upper() == radio_type
+                for item in discovered_radio
+            )
+            if not returned:
+                if discovered:
+                    by_type[key] = "UNKNOWN" if radio_service_failed else "NOT_AVAILABLE"
+                elif radio_group_missing:
+                    by_type[key] = "NOT_AVAILABLE"
 
         return {
             "Cisco Switch": switch_status,
