@@ -1,24 +1,14 @@
 from __future__ import annotations
 
+import math
 import re
+import time
 from typing import Any
 
 
-DESTINATIONS = {
-    "BOLVARSHAHRZAD",
-    "BORJMINA",
-    "GHOBA",
-    "HOSEINIEHERSHAD",
-    "MAHABGHODS",
-    "SHAMS",
-    "ZOMOROD",
-}
-
-
-def to_float(value: Any):
+def to_float(value: Any) -> float | None:
     if value is None:
         return None
-
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -33,784 +23,408 @@ def aggregate_status(statuses: list[str]) -> str:
         "NOT_AVAILABLE": 2,
         "PASS": 1,
     }
-
     if not statuses:
         return "UNKNOWN"
-
-    return max(
-        statuses,
-        key=lambda x: order.get(x, 3),
-    )
+    return max(statuses, key=lambda value: order.get(value, 3))
 
 
 def decode_zabbix_encoded(text: str) -> str:
     if not text:
         return text
-
     values = []
-
     for part in text.split("."):
         try:
             value = int(part)
         except (TypeError, ValueError):
             return text
-
         if not 0 <= value <= 255:
             return text
-
         values.append(value)
-
     while values and values[0] == 26:
         values.pop(0)
-
     if not values:
         return ""
-
-    try:
-        decoded = "".join(chr(value) for value in values)
-    except ValueError:
-        return text
-
+    decoded = "".join(chr(value) for value in values)
     printable = sum(
-        1
-        for character in decoded
-        if character.isprintable()
-        or character in "\r\n\t"
+        1 for character in decoded
+        if character.isprintable() or character in "\r\n\t"
     )
-
     if decoded and printable / len(decoded) >= 0.85:
         return decoded
-
     return text
 
 
-def evaluate_modulation(value: Any) -> dict:
-    value = to_float(value)
-
-    if value is None:
-        return {
-            "status": "NOT_AVAILABLE",
-            "value": None,
-            "threshold": 13,
-            "description": "Modulation value unavailable",
-        }
-
-    if value < 13:
-        return {
-            "status": "WARNING",
-            "value": value,
-            "threshold": 13,
-            "description": "Modulation below 13",
-        }
-
-    return {
-        "status": "PASS",
-        "value": value,
-        "threshold": 13,
-        "description": "Modulation is normal",
-    }
-
-
-def evaluate_difference(value: Any) -> dict:
-    value = to_float(value)
-
-    if value is None:
-        return {
-            "status": "NOT_AVAILABLE",
-            "value": None,
-            "threshold": 7,
-            "description": "Difference unavailable",
-        }
-
-    if value > 7:
-        return {
-            "status": "WARNING",
-            "value": value,
-            "threshold": 7,
-            "description": "Difference above 7",
-        }
-
-    return {
-        "status": "PASS",
-        "value": value,
-        "threshold": 7,
-        "description": "Difference is normal",
-    }
-
-
-def evaluate_traffic(value: Any) -> dict:
-    value = to_float(value)
-
-    if value is None:
-        return {
-            "status": "NOT_AVAILABLE",
-            "value": None,
-            "warning_threshold": 350_000_000,
-            "high_threshold": 410_000_000,
-            "description": "Traffic unavailable",
-        }
-
-    if value > 410_000_000:
-        return {
-            "status": "WARNING",
-            "value": value,
-            "warning_threshold": 350_000_000,
-            "high_threshold": 410_000_000,
-            "description": "Traffic above 410 Mbps",
-        }
-
-    if value > 350_000_000:
-        return {
-            "status": "WARNING",
-            "value": value,
-            "warning_threshold": 350_000_000,
-            "high_threshold": 410_000_000,
-            "description": "Traffic above 350 Mbps",
-        }
-
-    return {
-        "status": "PASS",
-        "value": value,
-        "warning_threshold": 350_000_000,
-        "high_threshold": 410_000_000,
-        "description": "Traffic is normal",
-    }
-
-
-def evaluate_packet_loss(value: Any) -> dict:
-    value = to_float(value)
-
-    if value is None:
-        return {
-            "status": "NOT_AVAILABLE",
-            "value": None,
-            "warning_threshold": 5,
-            "critical_threshold": 80,
-            "description": "Packet loss unavailable",
-        }
-
-    if value > 80:
-        return {
-            "status": "CRITICAL",
-            "value": value,
-            "warning_threshold": 5,
-            "critical_threshold": 80,
-            "description": "Packet loss above 80%",
-        }
-
-    if value > 20:
-        return {
-            "status": "WARNING",
-            "value": value,
-            "warning_threshold": 5,
-            "critical_threshold": 80,
-            "description": "Packet loss above 20%",
-        }
-
-    if value >= 5:
-        return {
-            "status": "WARNING",
-            "value": value,
-            "warning_threshold": 5,
-            "critical_threshold": 80,
-            "description": "Packet loss at/above 5%",
-        }
-
-    return {
-        "status": "PASS",
-        "value": value,
-        "warning_threshold": 5,
-        "critical_threshold": 80,
-        "description": "Packet loss is normal",
-    }
-
-
 def extract_item_ids(expression: str) -> list[str]:
-    return re.findall(
-        r"\{(\d+)\}",
-        expression or "",
-    )
+    return re.findall(r"\{(\d+)\}", expression or "")
 
 
-def extract_destination(
-    description: str,
-) -> str | None:
-
-    upper = (description or "").upper()
-
-    for destination in DESTINATIONS:
-        if destination in upper:
-            return destination
-
-    return None
-
-
-def build_trigger_index(
-    triggers: list[dict],
-) -> dict[str, list[dict]]:
-
+def build_trigger_index(triggers: list[dict]) -> dict[str, list[dict]]:
     result: dict[str, list[dict]] = {}
-
     for trigger in triggers:
-
-        trigger_items = (
-            trigger.get("items")
-            or []
-        )
-
-        for item in trigger_items:
-
-            itemid = str(
-                item.get("itemid", "")
-            ).strip()
-
-            if not itemid:
-                continue
-
-            result.setdefault(
-                itemid,
-                [],
-            ).append(trigger)
-
-        if not trigger_items:
-
-            for itemid in extract_item_ids(
-                trigger.get(
-                    "expression",
-                    "",
-                )
-            ):
-
-                result.setdefault(
-                    itemid,
-                    [],
-                ).append(trigger)
-
-    return result
-
-
-def modulation_links(
-    items: list[dict],
-    triggers: list[dict],
-) -> list[dict]:
-
-    trigger_index = build_trigger_index(
-        triggers
-    )
-
-    result = []
-
-    for item in items:
-
-        key = str(
-            item.get("key_", "")
-        )
-
-        if not key.lower().startswith(
-            "modulation_huawei["
-        ):
+        if str(trigger.get("status", "0")) != "0":
             continue
-
-        itemid = str(
-            item.get("itemid", "")
-        )
-
-        related = trigger_index.get(
-            itemid,
-            [],
-        )
-
-        destinations = []
-
-        for trigger in related:
-
-            destination = extract_destination(
-                trigger.get(
-                    "description",
-                    "",
-                )
-            )
-
-            if (
-                destination
-                and destination not in destinations
-            ):
-                destinations.append(
-                    destination
-                )
-
-        if not destinations:
-            destinations = [None]
-
-        link_name = key
-
-        prefix = "Modulation_huawei["
-
-        if (
-            key.startswith(prefix)
-            and key.endswith("]")
-        ):
-            link_name = key[
-                len(prefix):-1
-            ]
-
-        for destination in destinations:
-
-            result.append({
-                "itemid": itemid,
-                "key": key,
-                "link": link_name,
-                "destination": destination,
-                "value": to_float(
-                    item.get("lastvalue")
-                ),
-                "clock": item.get(
-                    "lastclock"
-                ),
-            })
-
-    return result
-
-
-def traffic_items(
-    items: list[dict],
-    triggers: list[dict],
-) -> list[dict]:
-
-    trigger_index = build_trigger_index(
-        triggers
-    )
-
-    result = []
-
-    for item in items:
-
-        key = str(
-            item.get("key_", "")
-        )
-
-        lower_key = key.lower()
-
-        if not (
-            lower_key.startswith(
-                "rx_traffic["
-            )
-            or lower_key.startswith(
-                "tx_traffic["
-            )
-        ):
-            continue
-
-        direction = (
-            "RX"
-            if lower_key.startswith(
-                "rx_traffic["
-            )
-            else "TX"
-        )
-
-        encoded = ""
-
-        if "[" in key:
-            encoded = key.split(
-                "[",
-                1,
-            )[1].rstrip("]")
-
-        itemid = str(
-            item.get("itemid")
-        )
-
-        related = trigger_index.get(
-            itemid,
-            [],
-        )
-
-        destinations = []
-
-        for trigger in related:
-
-            name = trigger.get(
-                "description",
-                "",
-            )
-
-            upper_name = name.upper()
-
-            if "TRAFFIC" not in upper_name:
-                continue
-
-            destination = extract_destination(
-                name
-            )
-
-            if (
-                destination
-                and destination not in destinations
-            ):
-                destinations.append(
-                    destination
-                )
-
-        if not destinations:
-            destinations = [None]
-
-        for destination in destinations:
-
-            result.append({
-                "itemid": itemid,
-                "key": key,
-                "direction": direction,
-                "source": encoded,
-                "decoded_source": (
-                    decode_zabbix_encoded(
-                        encoded
-                    )
-                ),
-                "destination": destination,
-                "value": to_float(
-                    item.get("lastvalue")
-                ),
-                "clock": item.get(
-                    "lastclock"
-                ),
-            })
-
-    return result
-
-
-def difference_items(
-    items: list[dict],
-) -> list[dict]:
-
-    latest: dict[str, dict] = {}
-
-    for item in items:
-
-        key = str(
-            item.get("key_", "")
-        )
-
-        lower_key = key.lower()
-
-        if not lower_key.startswith(
-            "rx_tx_diff_"
-        ):
-            continue
-
-        destination = key[
-            len("rx_tx_diff_"):
+        trigger_items = trigger.get("items") or []
+        ids = [
+            str(item.get("itemid", "")).strip()
+            for item in trigger_items
+            if item.get("itemid")
         ]
+        if not ids:
+            ids = extract_item_ids(trigger.get("expression", ""))
+        for itemid in ids:
+            if itemid:
+                result.setdefault(itemid, []).append(trigger)
+    return result
 
-        if destination.endswith("_1"):
-            destination = destination[:-2]
 
-        destination = destination.upper()
-
-        current_clock = int(
-            item.get("lastclock") or 0
-        )
-
+def _trigger_summary(triggers: list[dict]) -> dict[str, Any]:
+    mapped = []
+    active = []
+    for trigger in triggers:
+        priority = int(trigger.get("priority", 0) or 0)
+        value = str(trigger.get("value", "0"))
         entry = {
-            "itemid": str(
-                item.get("itemid")
-            ),
-            "key": key,
-            "destination": destination,
-            "value": to_float(
-                item.get("lastvalue")
-            ),
-            "clock": item.get(
-                "lastclock"
-            ),
-        }
-
-        previous = latest.get(
-            destination
-        )
-
-        if (
-            previous is None
-            or current_clock
-            >= int(previous.get("clock") or 0)
-        ):
-            latest[destination] = entry
-
-    return list(
-        latest.values()
-    )
-
-
-def packet_loss_item(
-    items: list[dict],
-) -> dict | None:
-
-    for item in items:
-
-        key = str(
-            item.get("key_", "")
-        ).lower()
-
-        if key != "packetloss":
-            continue
-
-        value = to_float(
-            item.get("lastvalue")
-        )
-
-        return {
-            "itemid": str(
-                item.get("itemid")
-            ),
-            "key": item.get("key_"),
+            "triggerid": trigger.get("triggerid"),
+            "description": trigger.get("description", ""),
+            "priority": priority,
             "value": value,
-            "clock": item.get(
-                "lastclock"
-            ),
-            **evaluate_packet_loss(value),
+            "lastchange": trigger.get("lastchange"),
+            "status": trigger.get("status"),
         }
+        mapped.append(entry)
+        if value == "1":
+            active.append(entry)
 
-    return None
+    active_priorities = [int(item["priority"]) for item in active]
+    if not active and mapped:
+        status = "PASS"
+        reason = "Associated enabled Zabbix triggers are currently OK."
+    elif active:
+        highest = max(active_priorities, default=0)
+        if highest >= 4:
+            status = "CRITICAL"
+        elif highest >= 2:
+            status = "WARNING"
+        else:
+            status = "UNKNOWN"
+        reason = "One or more associated Zabbix triggers are in PROBLEM state."
+    else:
+        status = "UNKNOWN"
+        reason = "No associated Zabbix trigger provides a verified health verdict."
+
+    return {
+        "status": status,
+        "reason": reason,
+        "active_count": len(active),
+        "triggers": mapped,
+    }
 
 
-def ensure_link(
-    link_results: dict[str, dict],
-    destination: str,
-) -> dict:
+def _item_link_name(item: dict, related_triggers: list[dict]) -> str:
+    key = str(item.get("key_", "") or "")
+    match = re.search(r"\[(.*)\]", key)
+    parameter = match.group(1).strip() if match else ""
+    decoded = decode_zabbix_encoded(parameter) if parameter else ""
+    if decoded and not re.fullmatch(r"[\d.]+", decoded):
+        return decoded
 
-    return link_results.setdefault(
-        destination,
-        {
-            "destination": destination,
-            "modulation": [],
-            "difference": None,
-            "traffic": {
-                "RX": [],
-                "TX": [],
-            },
-            "statuses": [],
-        },
+    for trigger in related_triggers:
+        description = str(trigger.get("description", "")).strip()
+        if description:
+            return description
+    return str(item.get("name") or key or "Unlabelled radio metric")
+
+
+def _metric(item: dict) -> dict[str, Any]:
+    return {
+        "itemid": str(item.get("itemid") or ""),
+        "name": item.get("name"),
+        "key": item.get("key_"),
+        "value": to_float(item.get("lastvalue")),
+        "raw_value": item.get("lastvalue"),
+        "units": item.get("units") or "",
+        "clock": int(item.get("lastclock") or 0),
+        "value_type": item.get("value_type"),
+    }
+
+
+def evaluate_modulation_history(
+    item: dict,
+    history: list[dict],
+    *,
+    now: int | None = None,
+    history_hours: int = 12,
+    minimum_samples: int = 2,
+) -> dict[str, Any]:
+    now = int(now or time.time())
+    current = to_float(item.get("lastvalue"))
+    current_clock = int(item.get("lastclock") or 0)
+    threshold_status = (
+        "WARNING" if current is not None and current < 13 else None
     )
+    points = []
+    for record in history or []:
+        value = to_float(record.get("value"))
+        clock = int(record.get("clock") or 0)
+        if value is not None and clock:
+            points.append({"value": value, "clock": clock})
+    points.sort(key=lambda entry: entry["clock"])
+
+    recent_from = now - history_hours * 3600
+    points = [entry for entry in points if entry["clock"] >= recent_from]
+    stale = not current_clock or current_clock < recent_from or current_clock > now + 300
+
+    summary = {
+        "current": current,
+        "current_timestamp": current_clock or None,
+        "max": max((entry["value"] for entry in points), default=None),
+        "max_timestamp": None,
+        "history_count": len(points),
+        "history_hours": history_hours,
+        "first_history_timestamp": points[0]["clock"] if points else None,
+        "last_history_timestamp": points[-1]["clock"] if points else None,
+        "stale": stale,
+        "threshold": 13,
+    }
+
+    if summary["max"] is not None:
+        maxima = [
+            entry for entry in points
+            if math.isclose(entry["value"], summary["max"], rel_tol=1e-9, abs_tol=1e-9)
+        ]
+        summary["max_timestamp"] = maxima[-1]["clock"] if maxima else None
+
+    if current is None:
+        status = "NOT_AVAILABLE"
+        reason = "Current Huawei modulation value is not available."
+    elif current < 13:
+        status = "WARNING"
+        reason = "Current Huawei modulation is below 13."
+    elif stale:
+        status = "UNKNOWN"
+        reason = "Current modulation timestamp is stale or unavailable."
+    elif len(points) < minimum_samples:
+        status = "UNKNOWN"
+        reason = (
+            f"Insufficient numerical history in the last {history_hours} hours "
+            f"({len(points)} samples; {minimum_samples} required)."
+        )
+    else:
+        max_value = summary["max"]
+        if max_value is not None and math.isclose(
+            current, max_value, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            status = "PASS"
+            reason = "Current modulation equals the maximum value in the available history window."
+        else:
+            status = "WARNING"
+            reason = "Current modulation is below the maximum value observed in the history window."
+
+    return {
+        "status": status,
+        "reason": reason,
+        **summary,
+    }
+
+
+def _history_points(history: dict[str, list[dict]], itemid: str) -> list[dict]:
+    value = history.get(str(itemid), [])
+    if isinstance(value, dict):
+        return value.get("history", []) or []
+    return value if isinstance(value, list) else []
+
+
+def _metric_records(
+    items: list[dict],
+    trigger_index: dict[str, list[dict]],
+    history: dict[str, list[dict]] | None = None,
+    *,
+    history_hours: int = 12,
+    now: int | None = None,
+) -> list[dict[str, Any]]:
+    records = []
+    for item in items:
+        key = str(item.get("key_") or "")
+        lower = key.lower()
+        if not lower.startswith("modulation_huawei["):
+            continue
+        metric = _metric(item)
+        related = trigger_index.get(metric["itemid"], [])
+        metric["link"] = _item_link_name(item, related)
+        metric["trigger_health"] = _trigger_summary(related)
+        metric["history"] = evaluate_modulation_history(
+            item,
+            _history_points(history or {}, metric["itemid"]),
+            now=now,
+            history_hours=history_hours,
+        )
+        metric["status"] = aggregate_status([
+            metric["history"]["status"],
+            metric["trigger_health"]["status"],
+        ])
+        records.append(metric)
+    return records
+
+
+def _traffic_records(
+    items: list[dict],
+    trigger_index: dict[str, list[dict]],
+) -> list[dict[str, Any]]:
+    records = []
+    for item in items:
+        key = str(item.get("key_") or "")
+        lower_key = key.lower()
+        name = str(item.get("name") or "").lower()
+        direction = None
+        if re.search(r"(^|[^a-z])rx[_ .-]?traffic|ifhcin", lower_key + " " + name):
+            direction = "RX"
+        elif re.search(r"(^|[^a-z])tx[_ .-]?traffic|ifhcout", lower_key + " " + name):
+            direction = "TX"
+        if not direction:
+            continue
+        metric = _metric(item)
+        related = trigger_index.get(metric["itemid"], [])
+        metric.update({
+            "direction": direction,
+            "link": _item_link_name(item, related),
+            "trigger_health": _trigger_summary(related),
+        })
+        # Do not invent a traffic threshold: only enabled Zabbix triggers
+        # are permitted to provide a traffic health verdict.
+        metric["status"] = metric["trigger_health"]["status"]
+        records.append(metric)
+    return records
+
+
+def _difference_records(
+    items: list[dict],
+    trigger_index: dict[str, list[dict]],
+) -> list[dict[str, Any]]:
+    records = []
+    for item in items:
+        key = str(item.get("key_") or "")
+        lower_key = key.lower()
+        name = str(item.get("name") or "").lower()
+        if "rx_tx_diff" not in lower_key and "rx tx diff" not in name:
+            continue
+        metric = _metric(item)
+        related = trigger_index.get(metric["itemid"], [])
+        metric["link"] = _item_link_name(item, related)
+        metric["trigger_health"] = _trigger_summary(related)
+        value = metric["value"]
+        if value is None:
+            metric["status"] = "NOT_AVAILABLE"
+            metric["reason"] = "RX/TX difference is unavailable."
+        elif abs(value) < 7:
+            metric["status"] = "PASS"
+            metric["reason"] = "Absolute RX/TX difference is below 7."
+        else:
+            metric["status"] = "WARNING"
+            metric["reason"] = "Absolute RX/TX difference is at least 7."
+        records.append(metric)
+    return records
 
 
 def analyze_rtn(
     items: list[dict],
     triggers: list[dict],
-) -> dict:
-
-    modulation = modulation_links(
-        items,
-        triggers,
+    history: dict[str, list[dict]] | None = None,
+    *,
+    history_hours: int = 12,
+    now: int | None = None,
+) -> dict[str, Any]:
+    trigger_index = build_trigger_index(triggers)
+    modulation = _metric_records(
+        items, trigger_index, history,
+        history_hours=history_hours, now=now,
     )
+    traffic = _traffic_records(items, trigger_index)
+    differences = _difference_records(items, trigger_index)
 
-    differences = difference_items(
-        items
-    )
-
-    traffic = traffic_items(
-        items,
-        triggers,
-    )
-
-    packet_loss = packet_loss_item(
-        items
-    )
-
-    link_results: dict[
-        str,
-        dict,
-    ] = {}
-
-    # ---------------------------------------------------------
-    # Difference
-    # ---------------------------------------------------------
-
-    for entry in differences:
-
-        destination = entry[
-            "destination"
-        ]
-
-        if destination not in DESTINATIONS:
-            continue
-
-        link = ensure_link(
-            link_results,
-            destination,
+    grouped: dict[str, dict[str, Any]] = {}
+    for record in modulation + traffic + differences:
+        link_name = str(record.get("link") or "Unlabelled link")
+        link = grouped.setdefault(
+            link_name,
+            {
+                "destination": link_name,
+                "modulation": [],
+                "difference": [],
+                "traffic": {"RX": [], "TX": []},
+                "status": "UNKNOWN",
+            },
         )
+        if record in modulation:
+            link["modulation"].append(record)
+        elif record in traffic:
+            link["traffic"][record["direction"]].append(record)
+        else:
+            link["difference"].append(record)
 
-        check = evaluate_difference(
-            entry["value"]
+    for link in grouped.values():
+        statuses = []
+        statuses.extend(item["status"] for item in link["modulation"])
+        statuses.extend(item["status"] for item in link["difference"])
+        statuses.extend(
+            item["status"]
+            for direction in ("RX", "TX")
+            for item in link["traffic"][direction]
         )
+        link["status"] = aggregate_status(statuses)
 
-        link["difference"] = {
-            "itemid": entry["itemid"],
-            "value": entry["value"],
-            **check,
-        }
-
-        link["statuses"].append(
-            check["status"]
-        )
-
-    # ---------------------------------------------------------
-    # Modulation
-    # ---------------------------------------------------------
-
-    for entry in modulation:
-
-        destination = entry[
-            "destination"
-        ]
-
-        if not destination:
-            continue
-
-        link = ensure_link(
-            link_results,
-            destination,
-        )
-
-        check = evaluate_modulation(
-            entry["value"]
-        )
-
-        link["modulation"].append({
-            "itemid": entry["itemid"],
-            "link": entry["link"],
-            "value": entry["value"],
-            **check,
-        })
-
-        link["statuses"].append(
-            check["status"]
-        )
-
-    # ---------------------------------------------------------
-    # Traffic
-    # ---------------------------------------------------------
-
-    traffic_results = []
-
-    for entry in traffic:
-
-        check = evaluate_traffic(
-            entry["value"]
-        )
-
-        traffic_entry = {
-            "itemid": entry["itemid"],
-            "direction": entry["direction"],
-            "source": entry["source"],
-            "decoded_source": entry[
-                "decoded_source"
-            ],
-            "destination": entry[
-                "destination"
-            ],
-            "value": entry["value"],
-            **check,
-        }
-
-        traffic_results.append(
-            traffic_entry
-        )
-
-        destination = entry[
-            "destination"
-        ]
-
-        if not destination:
-            continue
-
-        link = ensure_link(
-            link_results,
-            destination,
-        )
-
-        direction = entry[
-            "direction"
-        ]
-
-        link["traffic"][
-            direction
-        ].append({
-            "itemid": entry[
-                "itemid"
-            ],
-            "source": entry[
-                "source"
-            ],
-            "decoded_source": entry[
-                "decoded_source"
-            ],
-            "value": entry[
-                "value"
-            ],
-            **check,
-        })
-
-        link["statuses"].append(
-            check["status"]
-        )
-
-    # ---------------------------------------------------------
-    # Finalize each destination
-    # ---------------------------------------------------------
-
-    for link in link_results.values():
-
-        link["status"] = aggregate_status(
-            link["statuses"]
-        )
-
-        link.pop(
-            "statuses",
-            None,
-        )
-
-    # ---------------------------------------------------------
-    # Overall status
-    # ---------------------------------------------------------
-
-    status_inputs = [
-        link["status"]
-        for link in link_results.values()
-    ]
-
-    if packet_loss is not None:
-        status_inputs.append(
-            packet_loss["status"]
-        )
-
-    overall_status = aggregate_status(
-        status_inputs
-    )
-
-    # ---------------------------------------------------------
-    # Final result
-    # ---------------------------------------------------------
-
+    all_statuses = [entry["status"] for entry in grouped.values()]
     return {
         "type": "RTN",
-        "status": overall_status,
+        "status": aggregate_status(all_statuses),
+        "history_window_hours": history_hours,
         "summary": {
-            "link_count": len(
-                link_results
-            ),
-            "modulation_count": len(
-                modulation
-            ),
-            "difference_count": len(
-                differences
-            ),
-            "traffic_count": len(
-                traffic_results
-            ),
+            "link_count": len(grouped),
+            "modulation_count": len(modulation),
+            "difference_count": len(differences),
+            "traffic_count": len(traffic),
         },
-        "links": list(
-            link_results.values()
+        "links": list(grouped.values()),
+        "modulation": modulation,
+        "difference": differences,
+        "traffic": traffic,
+    }
+
+
+def analyze_generic_radio(
+    items: list[dict],
+    triggers: list[dict],
+    radio_type: str,
+) -> dict[str, Any]:
+    trigger_index = build_trigger_index(triggers)
+    metrics = []
+    for item in items:
+        key = str(item.get("key_") or "")
+        name = str(item.get("name") or "")
+        lower = (key + " " + name).lower()
+        if not any(token in lower for token in (
+            "traffic", "ifhcin", "ifhcout", "rx.", "tx.",
+            "rxpower", "txpower", "packetloss", "snr", "snir",
+        )):
+            continue
+        metric = _metric(item)
+        related = trigger_index.get(metric["itemid"], [])
+        metric["link"] = _item_link_name(item, related)
+        metric["trigger_health"] = _trigger_summary(related)
+        metric["status"] = metric["trigger_health"]["status"]
+        metrics.append(metric)
+
+    status = aggregate_status([entry["status"] for entry in metrics])
+    return {
+        "type": radio_type,
+        "status": status,
+        "metric_count": len(metrics),
+        "metrics": metrics,
+        "triggers": [
+            _trigger_summary([trigger]) for trigger in triggers
+            if str(trigger.get("status", "0")) == "0"
+        ],
+        "reason": (
+            "Metrics and Zabbix triggers are preserved without applying "
+            "unverified vendor-specific thresholds."
         ),
-        "packet_loss": packet_loss,
-        "traffic": traffic_results,
     }
