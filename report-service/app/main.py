@@ -665,6 +665,8 @@ def build_rtn(wb: Workbook, result: dict[str, Any]) -> None:
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=3, max_col=6):
         for cell in row:
             style_status_cell(cell)
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=13, max_col=13):
+        style_status_cell(row[0])
     ws.freeze_panes = "A2"
     auto_width(ws)
 
