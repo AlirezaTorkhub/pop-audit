@@ -593,7 +593,7 @@ function renderRadio(wrapper) {
         } else if (type === "EBAND") {
             const slots = analysis.checks?.difference?.slots || [];
             for (const slot of slots) {
-                for (const field of ["rx", "tx", "rx_calloff", "tx_calloff", "zabbix_difference"]) {
+                for (const field of ["rx", "tx", "rx_calloff", "tx_calloff", "zabbix_difference", "capacity_profile_input"]) {
                     const metric = slot[field];
                     if (metric) metrics.push({...metric, display_name: `Slot ${slot.slot} ${field.toUpperCase()}`});
                 }
