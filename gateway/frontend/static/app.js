@@ -589,6 +589,7 @@ function renderRadio(wrapper) {
                 ...(analysis.modulation || []),
                 ...(analysis.difference || []),
                 ...(analysis.traffic || []),
+                ...(analysis.packet_loss ? [analysis.packet_loss] : []),
             ];
         } else if (type === "EBAND") {
             const slots = analysis.checks?.difference?.slots || [];
