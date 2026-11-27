@@ -22,8 +22,8 @@ _TOKEN_IGNORES = {
 
 def normalize_site_code(site_code: str) -> str:
     value = str(site_code or "").strip()
-    if not value or not value.isdigit():
-        raise ValueError("Site code must contain digits only.")
+    if not re.fullmatch(r"\d{4}", value):
+        raise ValueError("Site code must contain exactly four digits.")
     return value
 
 
