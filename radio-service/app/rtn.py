@@ -258,9 +258,11 @@ def _metric_records(
             now=now,
             history_hours=history_hours,
         )
+        trigger_status = metric["trigger_health"]["status"]
+        history_status = metric["history"]["status"]
         metric["status"] = aggregate_status([
-            metric["history"]["status"],
-            metric["trigger_health"]["status"],
+            history_status,
+            trigger_status if trigger_status in ("CRITICAL", "WARNING") else history_status,
         ])
         records.append(metric)
     return records
