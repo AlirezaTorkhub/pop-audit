@@ -69,3 +69,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate Compose interpolation and service graph
         run: docker compose --env-file config/.env.example config --quiet
+      - name: Build all service images
+        run: docker compose --env-file config/.env.example build
