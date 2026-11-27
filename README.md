@@ -1,6 +1,6 @@
 # POP Audit
 
-POP Audit discovers devices from Zabbix and performs read-only checks for Cisco switches, Cisco NCS 540 (IOS XR), Ericsson Basebands, and outgoing radio links. Audit results are available from the web dashboard and as an Excel workbook.
+POP Audit discovers devices from Zabbix and performs read-only checks for Cisco switches, Cisco NCS 540 (IOS XR), Ericsson Basebands, and outgoing radio links. Site Codes must be exactly four digits. Audit results are available from the web dashboard and as an Excel workbook.
 
 ## Architecture
 
