@@ -1,17 +1,27 @@
+# Credentials and environment files
 .env
 .env.*
 !.env.example
-*.pem
-*.key
-__pycache__/
-.venv/
+config/.env
+config/.env.*
+!config/.env.example
 
-
-
-
-.env
-.env.*
-!.env.example
+# Python
 __pycache__/
 *.py[cod]
 .venv/
+venv/
+venvs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data and generated reports
+data/
+reports/
+*.xlsx
+*.log
+
+# Editor / OS
+.DS_Store
+Thumbs.db
