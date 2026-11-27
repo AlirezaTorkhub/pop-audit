@@ -371,14 +371,21 @@ class SiteDiscovery:
             result.ncs_status = "NOT_AVAILABLE"
             result.ncs_reason = f"Zabbix group {self.switch_aggregation_group} is unavailable."
         ncs_matches: list[dict[str, Any]] = []
+        possible_ncs_hosts = []
         for host in ncs_hosts:
             vendor, device_type = detect_device_type(host)
             if device_type != "ncs540":
                 # Aggregation group is not, by itself, proof of a Cisco NCS.
                 continue
+            possible_ncs_hosts.append(host)
             candidate_tokens = location_tokens(host)
             if site_tokens and candidate_tokens.intersection(site_tokens):
                 ncs_matches.append(host)
+
+        if possible_ncs_hosts and not site_tokens:
+            result.ncs_status = "UNKNOWN"
+            result.ncs_reason = "NCS 540 candidates exist, but Zabbix metadata did not provide enough POP location identity to associate one safely."
+            result.warnings.append(result.ncs_reason)
 
         ncs_matches = _unique_hosts(ncs_matches)
         if len(ncs_matches) == 1:
