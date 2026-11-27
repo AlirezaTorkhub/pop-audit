@@ -110,6 +110,28 @@ def safe_float(value: Any) -> float | None:
 def normalized_text(value: Any) -> str:
     return str(value or "").strip()
 
+def normalize_interface_name(value: Any) -> str:
+    """Canonicalize IOS abbreviations and long interface names for joins."""
+    token = re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+    aliases = (
+        ("tengigabitethernet", "te"),
+        ("tengige", "te"),
+        ("gigabitethernet", "gi"),
+        ("fastethernet", "fa"),
+        ("hundredgigabitethernet", "hu"),
+        ("fortygigabitethernet", "fo"),
+        ("twentyfivegigabitethernet", "tw"),
+        ("portchannel", "po"),
+        ("loopback", "lo"),
+        ("managementethernet", "mgmt"),
+        ("ethernet", "eth"),
+    )
+    for prefix, short in aliases:
+        if token.startswith(prefix):
+            return short + token[len(prefix):]
+    return token
+
+
 
 def status_result(
     status: str,
@@ -871,28 +893,37 @@ def audit_device(
             interfaces_detail_output
         )
 
-        # Merge the union of status, description and detail output so
-        # interfaces are not lost when one parser does not emit a row.
+        # Merge the union of status, description and detail output. IOS
+        # abbreviates names in show interfaces status (Gi1/0/1) but uses
+        # full names in show interfaces (GigabitEthernet1/0/1).
         status_by_name = {
-            item.get("interface"): item
+            normalize_interface_name(item.get("interface")): item
             for item in interface_status
             if item.get("interface")
         }
         detail_by_name = {
-            item.get("interface"): item
+            normalize_interface_name(item.get("interface")): item
             for item in interface_details
             if item.get("interface")
         }
-        interface_names = list(dict.fromkeys(
-            list(status_by_name.keys())
+        description_by_name = {
+            normalize_interface_name(name): description
+            for name, description in descriptions.items()
+        }
+
+        names_by_alias: dict[str, str] = {}
+        for source in (
+            [item.get("interface") for item in interface_status]
             + list(descriptions.keys())
-            + list(detail_by_name.keys())
-        ))
+            + [item.get("interface") for item in interface_details]
+        ):
+            if source:
+                names_by_alias.setdefault(normalize_interface_name(source), str(source))
 
         interfaces: list[dict[str, Any]] = []
-        for name in interface_names:
-            status_item = status_by_name.get(name, {})
-            detail = detail_by_name.get(name, {})
+        for alias, name in names_by_alias.items():
+            status_item = status_by_name.get(alias, {})
+            detail = detail_by_name.get(alias, {})
             raw_state = status_item.get("status_raw") or detail.get("line_state") or "unknown"
             raw_state_lower = str(raw_state).strip().lower()
             if raw_state_lower.startswith("administratively down") or raw_state_lower == "admin down":
@@ -901,12 +932,14 @@ def audit_device(
                 raw_state = "up"
             elif raw_state_lower.startswith("down"):
                 raw_state = "down"
+
             merged = {
                 **status_item,
-                "interface": name,
+                "interface": status_item.get("interface") or name,
+                "interface_full_name": detail.get("interface") or name,
                 "status_raw": raw_state,
-                "description": descriptions.get(
-                    name,
+                "description": description_by_name.get(
+                    alias,
                     status_item.get("name", detail.get("description", "")),
                 ),
                 "line_state": detail.get("line_state"),
@@ -920,7 +953,10 @@ def audit_device(
             }
             classified = classify_interface(merged)
             speed = str(status_item.get("speed") or "")
-            expected_speed = is_expected_speed(name, speed)
+            expected_speed = is_expected_speed(
+                str(merged.get("interface_full_name") or name),
+                speed,
+            )
             if raw_state.lower() in {"connected", "up"} and expected_speed is False:
                 classified["health"] = aggregate_status([classified["health"], "WARNING"])
                 classified["health_reason"] += " Gigabit/10-Gigabit interface is operating below its expected link speed."
@@ -1136,19 +1172,28 @@ def audit_ncs_device(device: dict[str, Any]) -> dict[str, Any]:
         desc_output = outputs["show interfaces description"].get("output", "")
         detail_output = outputs["show interfaces"].get("output", "")
         log_output = outputs["show logging last 10"].get("output", "")
-        descriptions = parse_interface_description(desc_output)
+        descriptions_raw = parse_interface_description(desc_output)
         details = parse_interfaces_detail(detail_output)
         by_name = {
-            item.get("interface"): item
+            normalize_interface_name(item.get("interface")): item
             for item in details
             if item.get("interface")
         }
-        names = list(dict.fromkeys(
+        descriptions = {
+            normalize_interface_name(name): (name, description)
+            for name, description in descriptions_raw.items()
+        }
+        aliases = list(dict.fromkeys(
             list(descriptions.keys()) + list(by_name.keys())
         ))
+        original_names = {
+            alias: by_name.get(alias, {}).get("interface") or descriptions.get(alias, (alias, ""))[0]
+            for alias in aliases
+        }
         interfaces = []
-        for name in names:
-            detail = by_name.get(name, {})
+        for alias in aliases:
+            name = original_names.get(alias, alias)
+            detail = by_name.get(alias, {})
             raw_state = str(detail.get("line_state") or "").lower()
             protocol = str(detail.get("protocol") or "").lower()
             status_raw = "up" if raw_state == "up" and protocol in ("up", "") else (
@@ -1157,7 +1202,7 @@ def audit_ncs_device(device: dict[str, Any]) -> dict[str, Any]:
             )
             merged = {
                 "interface": name,
-                "description": descriptions.get(name, detail.get("description", "")),
+                "description": descriptions.get(alias, (name, detail.get("description", "")))[1],
                 "status_raw": status_raw,
                 "line_state": detail.get("line_state"),
                 "protocol": detail.get("protocol"),
